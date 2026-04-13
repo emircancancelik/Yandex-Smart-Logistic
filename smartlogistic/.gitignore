@@ -1,0 +1,6 @@
+venv/
+.ipynb_checkpoints/
+__pycache__/
+*.parquet
+readme.md
+smart_logistics_README.md
