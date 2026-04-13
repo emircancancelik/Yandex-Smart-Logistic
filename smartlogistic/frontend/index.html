@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Smart Logistics — Real-time delivery route optimization dashboard for dispatchers. AI-powered delay prediction and route recalculation.">
+  <title>Smart Logistics — Dispatcher Dashboard</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- App CSS -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- ========== SIDEBAR ========== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🚚</div>
+      <div class="logo-text">
+        <h1>SmartLogistics</h1>
+        <span>Dispatch Control</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-title">Main</div>
+      <button class="nav-item active" data-view="dashboard" id="nav-dashboard">
+        <span class="nav-icon">📊</span>
+        Dashboard
+      </button>
+      <button class="nav-item" data-view="optimize" id="nav-optimize">
+        <span class="nav-icon">🔄</span>
+        Route Optimizer
+        <span class="nav-badge">AI</span>
+      </button>
+      <button class="nav-item" data-view="analytics" id="nav-analytics">
+        <span class="nav-icon">📈</span>
+        Analytics
+      </button>
+
+      <div class="nav-section-title" style="margin-top: 16px;">Data</div>
+      <button class="nav-item" data-view="routes" id="nav-routes">
+        <span class="nav-icon">🗺️</span>
+        All Routes
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-status">
+        <span class="status-dot"></span>
+        ML Engine Online
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========== MAIN CONTENT ========== -->
+  <main class="main-content">
+
+    <!-- Header -->
+    <header class="main-header">
+      <div class="header-left">
+        <button class="mobile-menu-btn" id="mobileMenuBtn">☰</button>
+        <h2 id="pageTitle">Dashboard</h2>
+        <div class="header-breadcrumb">
+          <span class="separator">|</span>
+          <span id="pageBreadcrumb">Real-time monitoring</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="header-time" id="headerClock">--:--:--</div>
+        <button class="btn-icon" id="btnRefresh" title="Refresh data">🔄</button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content-area">
+
+      <!-- =================== VIEW: DASHBOARD =================== -->
+      <div class="view active" id="view-dashboard">
+
+        <!-- KPI Cards -->
+        <div class="kpi-grid">
+          <div class="kpi-card success">
+            <div class="kpi-header">
+              <span class="kpi-label">Active Routes</span>
+              <div class="kpi-icon">🚛</div>
+            </div>
+            <div class="kpi-value" id="kpiActiveRoutes">—</div>
+            <span class="kpi-change positive">↑ operational</span>
+          </div>
+
+          <div class="kpi-card info">
+            <div class="kpi-header">
+              <span class="kpi-label">Avg Delay</span>
+              <div class="kpi-icon">⏱️</div>
+            </div>
+            <div class="kpi-value" id="kpiAvgDelay">—</div>
+            <span class="kpi-change negative">minutes per route</span>
+          </div>
+
+          <div class="kpi-card warning">
+            <div class="kpi-header">
+              <span class="kpi-label">On-Time Rate</span>
+              <div class="kpi-icon">✅</div>
+            </div>
+            <div class="kpi-value" id="kpiOnTime">—</div>
+            <span class="kpi-change positive">delivery success</span>
+          </div>
+
+          <div class="kpi-card danger">
+            <div class="kpi-header">
+              <span class="kpi-label">Delayed Routes</span>
+              <div class="kpi-icon">⚠️</div>
+            </div>
+            <div class="kpi-value" id="kpiDelayed">—</div>
+            <span class="kpi-change negative">need attention</span>
+          </div>
+        </div>
+
+        <!-- Map + Route Panel -->
+        <div class="dashboard-grid">
+          <div>
+            <div class="card">
+              <div class="card-header">
+                <h3>🗺️ Live Route Map — Sivas Region</h3>
+                <span class="badge badge-success">● Live</span>
+              </div>
+              <div class="map-container">
+                <div id="map"></div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <div class="card-header">
+                <h3>📋 Route Status</h3>
+                <button class="btn btn-sm btn-secondary" id="btnSortRoutes">Sort by delay</button>
+              </div>
+              <div class="card-body">
+                <div class="route-list" id="routeList">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Weather -->
+            <div class="card" style="margin-top: 16px;">
+              <div class="card-header">
+                <h3>🌤️ Weather Conditions</h3>
+              </div>
+              <div class="card-body">
+                <div class="weather-widget" id="weatherWidget">
+                  <div class="weather-icon">☀️</div>
+                  <div class="weather-details">
+                    <h4>22°C</h4>
+                    <span>Partly cloudy — Sivas region</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <!-- END DASHBOARD VIEW -->
+
+      <!-- =================== VIEW: ROUTE OPTIMIZER =================== -->
+      <div class="view" id="view-optimize">
+
+        <!-- Row 1: Route Selector + Conditions -->
+        <div class="optimize-top-bar">
+          <div class="card" style="flex: 1;">
+            <div class="card-header">
+              <h3>📋 Select Route & Conditions</h3>
+              <span class="badge badge-info">AI-Powered</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+                <div class="form-group">
+                  <label class="form-label" for="optRouteSelect">Route</label>
+                  <select class="form-control" id="optRouteSelect">
+                    <option value="">— Select a route —</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="weatherCondition">Weather</label>
+                  <select class="form-control" id="weatherCondition">
+                    <option value="clear">☀️ Clear</option>
+                    <option value="cloudy">☁️ Cloudy</option>
+                    <option value="rain" selected>🌧️ Rain</option>
+                    <option value="snow">❄️ Snow</option>
+                    <option value="fog">🌫️ Fog</option>
+                    <option value="wind">💨 Wind</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="trafficLevel">Traffic Level</label>
+                  <select class="form-control" id="trafficLevel">
+                    <option value="low">🟢 Low</option>
+                    <option value="moderate">🟡 Moderate</option>
+                    <option value="high" selected>🔴 High</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="temperatureC">Temp (°C)</label>
+                  <input class="form-control" type="number" id="temperatureC" value="5" step="0.5">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="vehicleType">Vehicle</label>
+                  <select class="form-control" id="vehicleType">
+                    <option value="van">🚐 Van</option>
+                    <option value="truck">🚛 Truck</option>
+                    <option value="motorcycle">🏍️ Motorcycle</option>
+                  </select>
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                  <button class="btn btn-primary" id="btnOptimize" style="width: 100%; white-space: nowrap;">
+                    🧠 Analyze & Optimize
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Map + Panels -->
+        <div class="optimize-main-grid" style="margin-top: 20px;">
+
+          <!-- LEFT: Optimization Map -->
+          <div>
+            <div class="card">
+              <div class="card-header">
+                <h3>🗺️ Route Optimization Map</h3>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <span class="badge badge-info" id="optMapLegendOriginal" style="display:none;">— Original Route</span>
+                  <span class="badge badge-success" id="optMapLegendOptimized" style="display:none;">— Optimized Route</span>
+                  <span class="badge badge-info" id="optMapStatus">Select a route</span>
+                </div>
+              </div>
+              <div class="map-container" style="height: 480px;">
+                <div id="optimizeMap"></div>
+              </div>
+            </div>
+
+            <!-- Dispatcher Alerts — below map -->
+            <div class="card" id="dispatcherAlerts" style="margin-top: 16px; display: none;">
+              <div class="card-header" style="background: rgba(245, 158, 11, 0.08);">
+                <h3>🚨 Dispatcher Alerts</h3>
+                <span class="badge badge-warning" id="alertCount">0 alerts</span>
+              </div>
+              <div class="card-body" id="alertsList" style="max-height: 200px; overflow-y: auto;">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: Stop Details + Results -->
+          <div>
+            <!-- Stop-by-Stop Delay Prediction Table -->
+            <div class="card">
+              <div class="card-header">
+                <h3>📍 Stop-by-Stop Delay Analysis</h3>
+                <span class="badge badge-info" id="stopCount">0 stops</span>
+              </div>
+              <div class="card-body" style="padding: 0; max-height: 320px; overflow-y: auto;">
+                <table class="data-table" id="stopDelayTable">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Stop ID</th>
+                      <th>Road</th>
+                      <th>Delay</th>
+                      <th>Prob.</th>
+                      <th>Window</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="stopDelayBody">
+                    <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Select a route to see stops</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Network Graph (compact) -->
+            <div class="card" style="margin-top: 16px;">
+              <div class="card-header">
+                <h3>🔗 Network Graph</h3>
+                <span class="badge badge-info" id="graphStatus">Idle</span>
+              </div>
+              <div class="card-body" style="padding: 12px;">
+                <svg class="network-graph" id="networkGraph" viewBox="0 0 600 220" style="height: 180px;">
+                  <!-- Edges -->
+                  <line id="edge-AB" class="edge-line" x1="80" y1="110" x2="250" y2="40" />
+                  <line id="edge-BD" class="edge-line" x1="250" y1="40" x2="420" y2="110" />
+                  <line id="edge-AC" class="edge-line" x1="80" y1="110" x2="250" y2="190" />
+                  <line id="edge-CD" class="edge-line" x1="250" y1="190" x2="420" y2="110" />
+                  <line id="edge-DE" class="edge-line" x1="420" y1="110" x2="560" y2="110" />
+                  <!-- Edge Weights -->
+                  <text class="edge-weight" x="155" y="62" id="weight-AB">15 min</text>
+                  <text class="edge-weight" x="345" y="62" id="weight-BD">20 min</text>
+                  <text class="edge-weight" x="155" y="164" id="weight-AC">25 min</text>
+                  <text class="edge-weight" x="345" y="164" id="weight-CD">10 min</text>
+                  <text class="edge-weight" x="490" y="98" id="weight-DE">30 min</text>
+                  <!-- Nodes -->
+                  <circle id="node-A" class="node-circle" cx="80" cy="110" r="18" />
+                  <circle id="node-B" class="node-circle" cx="250" cy="40" r="18" />
+                  <circle id="node-C" class="node-circle" cx="250" cy="190" r="18" />
+                  <circle id="node-D" class="node-circle" cx="420" cy="110" r="18" />
+                  <circle id="node-E" class="node-circle" cx="560" cy="110" r="18" />
+                  <!-- Node Labels -->
+                  <text class="node-label" x="80" y="110">A</text>
+                  <text class="node-label" x="250" y="40">B</text>
+                  <text class="node-label" x="250" y="190">C</text>
+                  <text class="node-label" x="420" y="110">D</text>
+                  <text class="node-label" x="560" y="110">E</text>
+                </svg>
+              </div>
+            </div>
+
+            <!-- ML Result Panel -->
+            <div class="result-panel" id="resultPanel" style="margin-top: 16px;">
+              <div class="result-header success" id="resultHeader">
+                <h3>✅ Optimization Complete</h3>
+                <span class="badge badge-success" id="resultStatus">Success</span>
+              </div>
+              <div class="result-body">
+                <div class="result-stat">
+                  <span class="stat-label">🧠 ML Predicted Delay</span>
+                  <span class="stat-value" id="resDelay" style="color: var(--warning);">—</span>
+                </div>
+                <div class="result-stat">
+                  <span class="stat-label">Analysis</span>
+                  <span class="stat-value" id="resAnalysis" style="font-family: var(--font-sans); font-weight: 500; font-size: 0.85rem;">—</span>
+                </div>
+                <div class="result-stat">
+                  <span class="stat-label">Optimized Route</span>
+                  <span class="stat-value" id="resNewRoute" style="color: var(--success);">—</span>
+                </div>
+                <div class="result-stat">
+                  <span class="stat-label">Est. Time</span>
+                  <span class="stat-value" id="resTotalTime">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recommendation Card -->
+            <div class="card" id="recommendationCard" style="display: none; margin-top: 16px;">
+              <div class="card-header" style="background: rgba(59, 130, 246, 0.08);">
+                <h3>💡 Dispatcher Recommendation</h3>
+              </div>
+              <div class="card-body">
+                <p id="recommendation" style="font-size: 0.88rem; line-height: 1.6; color: var(--text-secondary);"></p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Hidden fields for API compatibility -->
+        <input type="hidden" id="eventId" value="EVT-001">
+        <input type="hidden" id="affectedEdge" value="NodeA-NodeB">
+        <input type="hidden" id="totalDistanceKm" value="250">
+        <input type="hidden" id="sourceNode" value="NodeA">
+        <input type="hidden" id="targetNode" value="NodeE">
+
+      </div>
+      <!-- END OPTIMIZE VIEW -->
+
+      <!-- =================== VIEW: ANALYTICS =================== -->
+      <div class="view" id="view-analytics">
+
+        <!-- Summary Stats -->
+        <div class="stat-row" id="analyticsSummary">
+          <div class="stat-item">
+            <div class="stat-number" id="statTotalRoutes">—</div>
+            <div class="stat-label">Total Routes</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" id="statAvgDelay" style="color: var(--warning);">—</div>
+            <div class="stat-label">Avg Delay (min)</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" id="statMaxDelay" style="color: var(--danger);">—</div>
+            <div class="stat-label">Max Delay (min)</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" id="statAvgOnTime" style="color: var(--success);">—</div>
+            <div class="stat-label">Avg On-Time %</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-number" id="statTotalDistance">—</div>
+            <div class="stat-label">Total KM Driven</div>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+          <div class="card">
+            <div class="card-header">
+              <h3>📊 Delay by Weather Condition</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-container">
+                <canvas id="chartDelayByWeather"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>📊 Delay by Traffic Level</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-container">
+                <canvas id="chartDelayByTraffic"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="card">
+            <div class="card-header">
+              <h3>📊 Vehicle Type Distribution</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-container">
+                <canvas id="chartVehicleType"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>📊 On-Time Rate Distribution</h3>
+            </div>
+            <div class="card-body">
+              <div class="chart-container">
+                <canvas id="chartOnTimeRate"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <!-- END ANALYTICS VIEW -->
+
+      <!-- =================== VIEW: ALL ROUTES =================== -->
+      <div class="view" id="view-routes">
+        <div class="card">
+          <div class="card-header">
+            <h3>🗺️ All Routes Data</h3>
+            <span class="badge badge-info" id="routeCountBadge">0 routes</span>
+          </div>
+          <div class="card-body" style="padding: 0; max-height: 600px; overflow-y: auto;">
+            <table class="data-table" id="routesTable">
+              <thead>
+                <tr>
+                  <th>Route ID</th>
+                  <th>Vehicle</th>
+                  <th>Stops</th>
+                  <th>Distance</th>
+                  <th>Planned</th>
+                  <th>Actual</th>
+                  <th>Delay</th>
+                  <th>Weather</th>
+                  <th>Traffic</th>
+                  <th>On-Time %</th>
+                </tr>
+              </thead>
+              <tbody id="routesTableBody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <!-- END ROUTES VIEW -->
+
+    </div>
+  </main>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- App Scripts -->
+<script src="js/data.js"></script>
+<script src="js/api.js"></script>
+<script src="js/map.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/analytics.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
