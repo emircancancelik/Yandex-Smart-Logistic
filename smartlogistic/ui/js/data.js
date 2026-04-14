@@ -99,7 +99,13 @@ const DataStore = {
   getRoutesByDelay() {
     return [...this.routes].sort((a, b) => (b.total_delay_min || 0) - (a.total_delay_min || 0));
   },
-
+// data.js içine ekle:
+getTotalPackages(routeId) {
+    if (!this.routeStops) return 0;
+    return this.routeStops
+        .filter(s => s.route_id === routeId)
+        .reduce((sum, stop) => sum + (parseInt(stop.package_count) || 0), 0);
+},
   /** Group and average delay by a given field */
   groupDelayBy(field) {
     const groups = {};
