@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles 
 import uvicorn
+import os
 from core.predictor import DelayPredictor
 from core.optimizer import RouteOptimizer
 
@@ -19,19 +21,16 @@ class IncidentPayload(BaseModel):
     vehicle_type: str
     temperature_c: float
     total_distance_km: float
-    source_node: str = "NodeA"  # Added routing parameter
-    target_node: str = "NodeE"  # Added routing parameter
+    source_node: str = "NodeA"
+    target_node: str = "NodeE"  
 
 @app.post("/api/v1/optimize-route")
 async def optimize_route(payload: IncidentPayload):
     try:
-        # 1. Convert Pydantic payload to dictionary
         data = payload.model_dump()
         
-        # 2. Predict penalty (Delay in minutes) using XGBoost
         additional_delay = predictor.predict(data)
         
-        # 3. Recalculate route via Graph Algorithm (NetworkX)
         routing_result = optimizer.optimize_route(
             source=payload.source_node,
             target=payload.target_node,
@@ -41,8 +40,6 @@ async def optimize_route(payload: IncidentPayload):
         
         if "error" in routing_result:
             raise HTTPException(status_code=400, detail=routing_result["error"])
-
-        # 4. Return the finalized tactical decision
         return {
             "status": "success",
             "event_id": payload.event_id,
@@ -56,6 +53,11 @@ async def optimize_route(payload: IncidentPayload):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+if os.path.exists("data"):
+    app.mount("/data", StaticFiles(directory="data"), name="data")
+
+if os.path.exists("ui"):
+    app.mount("/", StaticFiles(directory="ui", html=True), name="ui")
 
 if __name__ == "__main__":
     uvicorn.run("api.routes:app", host="0.0.0.0", port=8000, reload=True)

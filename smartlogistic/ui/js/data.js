@@ -38,7 +38,7 @@ const DataStore = {
   /** Load a CSV file relative to the data directory */
   async loadCSV(filename) {
     try {
-      const response = await fetch(`../smartlogistic/data/${filename}`);
+      const response = await fetch(`/data/${filename}`);
       if (!response.ok) throw new Error(`Failed to load ${filename}`);
       const text = await response.text();
       return this.parseCSV(text);
