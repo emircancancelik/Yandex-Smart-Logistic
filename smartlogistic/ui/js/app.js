@@ -375,6 +375,41 @@
         ? `${apiResult.tactical_decision.total_estimated_time_minutes} min`
         : `${(routeInfo ? routeInfo.planned_duration_min : 0).toFixed(0)} min planned`;
 
+      // --- Financial Calculation ---
+      const UNIT_COST_KM = 0.20;
+      const UNIT_COST_MIN = 0.20;
+
+      const beforeDistance = parseFloat(document.getElementById('totalDistanceKm').value) || 0;
+      const plannedTime = routeInfo ? routeInfo.planned_duration_min : 0;
+      const beforeTimeMin = plannedTime + originalTotalDelay;
+      const beforeCostVal = (beforeDistance * UNIT_COST_KM) + (beforeTimeMin * UNIT_COST_MIN);
+
+      const afterDelayMin = apiResult ? apiResult.ml_predicted_delay_minutes : (originalTotalDelay > 0 ? originalTotalDelay * 0.4 : 0);
+      const afterTimeMin = apiResult ? apiResult.tactical_decision.total_estimated_time_minutes : (plannedTime + afterDelayMin);
+      const afterDistance = beforeDistance; // Distance is constant based on prompt or base route
+
+      const afterCostVal = (afterDistance * UNIT_COST_KM) + (afterTimeMin * UNIT_COST_MIN);
+      const savedCost = beforeCostVal - afterCostVal;
+      const timeSaved = beforeTimeMin - afterTimeMin;
+      const efficiency = beforeTimeMin > 0 ? (timeSaved / beforeTimeMin * 100).toFixed(1) : "0.0";
+
+      document.getElementById('beforeCost').textContent = `$${beforeCostVal.toFixed(2)}`;
+      document.getElementById('beforeTime').textContent = `${beforeTimeMin.toFixed(0)} min`;
+      document.getElementById('afterCost').textContent = `$${afterCostVal.toFixed(2)}`;
+      document.getElementById('afterTime').textContent = `${afterTimeMin.toFixed(0)} min`;
+      document.getElementById('efficiencyGain').textContent = `%${efficiency}`;
+      document.getElementById('moneySaved').textContent = `$${savedCost.toFixed(2)} Saved`;
+
+      const fAlert = document.getElementById('financialAlert');
+      const sDesc = document.getElementById('savingsDescription');
+      if (savedCost > 0) {
+        fAlert.style.display = 'block';
+        sDesc.textContent = `AI optimization saved ${timeSaved.toFixed(0)} minutes. A total of $${savedCost.toFixed(2)} was saved in time and fuel costs.`;
+      } else {
+        fAlert.style.display = 'none';
+      }
+      // -----------------------------
+
       resultPanel.classList.add('visible');
 
       // 6. Generate smart dispatcher recommendation
@@ -533,7 +568,7 @@
     tbody.innerHTML = routes.map(r => {
       const delay = r.total_delay_min || 0;
       const delayBadge = delay > 60 ? 'badge-danger' :
-                         delay > 20 ? 'badge-warning' : 'badge-success';
+        delay > 20 ? 'badge-warning' : 'badge-success';
       const onTimeRate = ((r.on_time_delivery_rate || 0) * 100).toFixed(0);
 
       return `

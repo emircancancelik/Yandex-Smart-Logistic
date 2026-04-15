@@ -15,6 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 model = joblib.load('models/gb_delay_predictor.pkl')
 
 class RoutePayload(BaseModel):
