@@ -1,40 +1,55 @@
 /* =========================================================
-   map.js — Leaflet Map Manager
+   map.js — Leaflet Map Manager (OSRM Real Road Network)
    Interactive map showing delivery routes and stops
    Supports two map instances: dashboard + optimization
    ========================================================= */
 
+// ─── OSRM YARDIMCI FONKSİYONU (Nesnelerin dışında, global) ───
+async function fetchOSRMRoute(points) {
+  if (!points || points.length < 2) return points; // En az 2 nokta lazım
+  
+  // OSRM [longitude, latitude] formatını bekler
+  const coordString = points.map(p => `${p[1]},${p[0]}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson`;
+
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+      // Gelen veriyi Leaflet'in beklediği [latitude, longitude] formatına geri çevirir
+      return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+    }
+    return points; // Hata durumunda kuş uçuşu düz çizgiye geri dön
+  } catch (err) {
+    console.warn('[OSRM] Yol tarifi alınamadı, düz çizgi kullanılıyor:', err);
+    return points;
+  }
+}
+
+// ─── DASHBOARD HARİTASI ───
 const MapManager = {
   map: null,
   markers: [],
   polylines: [],
   markerGroup: null,
 
-  /** Initialize the Leaflet map centered on Sivas region */
   init() {
-    // Sivas coordinates
     this.map = L.map('map', {
       zoomControl: false,
       attributionControl: true
     }).setView([39.55, 37.15], 10);
 
-    // Dark tile layer for premium look
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19
     }).addTo(this.map);
 
-    // Add zoom control to top-left
     L.control.zoom({ position: 'topleft' }).addTo(this.map);
-
-    // Marker cluster group
     this.markerGroup = L.layerGroup().addTo(this.map);
-
     console.log('[Map] Initialized on Sivas region');
   },
 
-  /** Clear all markers and polylines */
   clear() {
     this.markerGroup.clearLayers();
     this.polylines.forEach(p => this.map.removeLayer(p));
@@ -42,7 +57,6 @@ const MapManager = {
     this.markers = [];
   },
 
-  /** Create a colored circle marker for a stop */
   createStopMarker(stop, routeColor) {
     const delayColor = stop.delay > 15 ? '#ef4444' :
                        stop.delay > 5  ? '#f59e0b' : '#10b981';
@@ -75,14 +89,17 @@ const MapManager = {
     return marker;
   },
 
-  /** Plot a single route with its stops */
-  plotRoute(routeId, stops, color) {
+  // DİKKAT: Artık asenkron (async) çalışıyor
+  async plotRoute(routeId, stops, color) {
     if (!stops || stops.length === 0) return;
 
     const coords = stops.map(s => [s.lat, s.lng]);
+    
+    // OSRM'den gerçek yol koordinatlarını çek
+    const roadCoords = await fetchOSRMRoute(coords);
 
-    // Polyline
-    const polyline = L.polyline(coords, {
+    // Düz çizgi (coords) yerine gerçek yolları (roadCoords) çiz
+    const polyline = L.polyline(roadCoords, {
       color: color,
       weight: 3,
       opacity: 0.7,
@@ -93,7 +110,6 @@ const MapManager = {
     polyline.bindPopup(`<b>${routeId}</b> — ${stops.length} stops`);
     this.polylines.push(polyline);
 
-    // Markers
     stops.forEach(stop => {
       const marker = this.createStopMarker(stop, color);
       this.markerGroup.addLayer(marker);
@@ -101,8 +117,8 @@ const MapManager = {
     });
   },
 
-  /** Plot multiple routes from DataStore */
-  plotAllRoutes(dataStore, maxRoutes = 15) {
+  // DİKKAT: Çoklu çizim yaparken await kullanabilmek için forEach yerine for...of kullanıldı
+  async plotAllRoutes(dataStore, maxRoutes = 15) {
     this.clear();
 
     const routeColors = [
@@ -113,13 +129,13 @@ const MapManager = {
 
     const routeIds = dataStore.getRouteIds().slice(0, maxRoutes);
 
-    routeIds.forEach((routeId, idx) => {
+    for (let idx = 0; idx < routeIds.length; idx++) {
+      const routeId = routeIds[idx];
       const stops = dataStore.getStopCoordinates(routeId);
       const color = routeColors[idx % routeColors.length];
-      this.plotRoute(routeId, stops, color);
-    });
+      await this.plotRoute(routeId, stops, color); // Asenkron bekleme
+    }
 
-    // Fit bounds to show all markers
     if (this.markers.length > 0) {
       const allCoords = this.markers.map(m => m.getLatLng());
       const bounds = L.latLngBounds(allCoords);
@@ -129,33 +145,26 @@ const MapManager = {
     console.log(`[Map] Plotted ${routeIds.length} routes with ${this.markers.length} stops`);
   },
 
-  /** Highlight a specific route on the map */
   highlightRoute(routeId, dataStore) {
-    // Dim all existing routes
     this.polylines.forEach(p => p.setStyle({ opacity: 0.2 }));
-
-    // Get this route's stops and plot with highlight
     const stops = dataStore.getStopCoordinates(routeId);
     if (stops.length > 0) {
+      // Highlight için basitleştirilmiş düz çizgi kullanabiliriz veya OSRM eklenebilir
       const highlight = L.polyline(
         stops.map(s => [s.lat, s.lng]),
         { color: '#3b82f6', weight: 5, opacity: 1 }
       ).addTo(this.map);
 
       this.polylines.push(highlight);
-
-      // Center on this route
       const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lng]));
       this.map.fitBounds(bounds, { padding: [50, 50] });
     }
   },
 
-  /** Reset highlight */
   resetHighlight() {
     this.polylines.forEach(p => p.setStyle({ opacity: 0.7 }));
   },
 
-  /** Resize handler */
   invalidateSize() {
     if (this.map) {
       setTimeout(() => this.map.invalidateSize(), 100);
@@ -164,22 +173,17 @@ const MapManager = {
 };
 
 
-/* =========================================================
-   OptimizeMap — Second map instance for route optimization
-   Shows original route, delay predictions, and optimized route
-   ========================================================= */
-
+// ─── OPTIMIZATION HARİTASI (AI KARARLARI) ───
 const OptimizeMap = {
   map: null,
   layers: {
-    original: null,     // LayerGroup for original route
-    optimized: null,    // LayerGroup for optimized route
-    markers: null,      // LayerGroup for stop markers
-    labels: null        // LayerGroup for number labels
+    original: null,
+    optimized: null,
+    markers: null,
+    labels: null
   },
   initialized: false,
 
-  /** Initialize the optimization map */
   init() {
     if (this.initialized) return;
 
@@ -196,7 +200,6 @@ const OptimizeMap = {
 
     L.control.zoom({ position: 'topleft' }).addTo(this.map);
 
-    // Create layer groups
     this.layers.original = L.layerGroup().addTo(this.map);
     this.layers.optimized = L.layerGroup().addTo(this.map);
     this.layers.markers = L.layerGroup().addTo(this.map);
@@ -206,22 +209,23 @@ const OptimizeMap = {
     console.log('[OptimizeMap] Initialized');
   },
 
-  /** Clear all layers */
   clear() {
     Object.values(this.layers).forEach(layer => {
       if (layer) layer.clearLayers();
     });
   },
 
-  /** Show a route with numbered stop markers and delay indicators */
-  showRoute(stops, routeId) {
+  // DİKKAT: Artık asenkron çalışıyor
+  async showRoute(stops, routeId) {
     this.clear();
     if (!stops || stops.length === 0) return;
 
     const coords = stops.map(s => [s.lat, s.lng]);
+    
+    // Orijinal rota için gerçek yol ağını al
+    const roadCoords = await fetchOSRMRoute(coords);
 
-    // Draw original route polyline (blue)
-    const polyline = L.polyline(coords, {
+    const polyline = L.polyline(roadCoords, {
       color: '#3b82f6',
       weight: 4,
       opacity: 0.8,
@@ -229,7 +233,6 @@ const OptimizeMap = {
     });
     this.layers.original.addLayer(polyline);
 
-    // Add numbered markers with delay coloring
     stops.forEach((stop, idx) => {
       const delayColor = stop.delay > 15 ? '#ef4444' :
                          stop.delay > 5  ? '#f59e0b' : '#10b981';
@@ -237,7 +240,6 @@ const OptimizeMap = {
       const probColor = stop.delayProb > 0.5 ? '#ef4444' :
                         stop.delayProb > 0.25 ? '#f59e0b' : '#10b981';
 
-      // Main marker — larger with number
       const marker = L.circleMarker([stop.lat, stop.lng], {
         radius: 12,
         fillColor: delayColor,
@@ -247,7 +249,6 @@ const OptimizeMap = {
         fillOpacity: 0.9
       });
 
-      // Rich popup with delay prediction
       marker.bindPopup(`
         <div style="font-family: 'Inter', sans-serif; min-width: 220px;">
           <div style="font-weight: 700; font-size: 14px; margin-bottom: 8px; color: #1e293b;">
@@ -274,7 +275,6 @@ const OptimizeMap = {
 
       this.layers.markers.addLayer(marker);
 
-      // Number label on top
       const label = L.divIcon({
         className: 'stop-number-label',
         html: `<div style="
@@ -295,31 +295,30 @@ const OptimizeMap = {
       this.layers.labels.addLayer(labelMarker);
     });
 
-    // Fit bounds
     const bounds = L.latLngBounds(coords);
     this.map.fitBounds(bounds, { padding: [40, 40] });
-
     console.log(`[OptimizeMap] Showing route ${routeId} with ${stops.length} stops`);
   },
 
-  /** Show optimized (reordered) route overlaid on original */
-  showOptimizedRoute(originalStops, optimizedStops) {
-    // Dim the original route
+  // DİKKAT: Artık asenkron çalışıyor
+  async showOptimizedRoute(originalStops, optimizedStops) {
     this.layers.original.eachLayer(layer => {
       if (layer.setStyle) layer.setStyle({ opacity: 0.3, dashArray: '8 4' });
     });
 
-    // Draw optimized route (green, thicker)
     const coords = optimizedStops.map(s => [s.lat, s.lng]);
-    const optPolyline = L.polyline(coords, {
-      color: '#10b981',
+    
+    // AI tarafından optimize edilmiş rota için gerçek yol ağını al
+    const roadCoords = await fetchOSRMRoute(coords);
+
+    const optPolyline = L.polyline(roadCoords, {
+      color: '#10b981', // Yeşil (AI Onayı)
       weight: 5,
       opacity: 0.9,
       smoothFactor: 1.5
     });
     this.layers.optimized.addLayer(optPolyline);
 
-    // Update markers with new sequence numbers
     this.layers.labels.clearLayers();
     optimizedStops.forEach((stop, idx) => {
       const label = L.divIcon({
@@ -342,14 +341,12 @@ const OptimizeMap = {
       this.layers.labels.addLayer(labelMarker);
     });
 
-    // Show legends
     document.getElementById('optMapLegendOriginal').style.display = 'inline-flex';
     document.getElementById('optMapLegendOptimized').style.display = 'inline-flex';
 
     console.log('[OptimizeMap] Optimized route overlay applied');
   },
 
-  /** Resize handler */
   invalidateSize() {
     if (this.map) {
       setTimeout(() => this.map.invalidateSize(), 150);

@@ -308,165 +308,128 @@
     const routeInfo = DataStore.routes.find(r => r.route_id === selectedRouteId);
 
     // Build payload for the backend API
-    const formData = {
-      eventId: `EVT-${selectedRouteId}`,
-      affectedEdge: document.getElementById('affectedEdge').value,
-      weatherCondition: document.getElementById('weatherCondition').value,
-      trafficLevel: document.getElementById('trafficLevel').value,
-      vehicleType: document.getElementById('vehicleType').value,
-      temperatureC: document.getElementById('temperatureC').value,
-      totalDistanceKm: document.getElementById('totalDistanceKm').value,
-      sourceNode: document.getElementById('sourceNode').value,
-      targetNode: document.getElementById('targetNode').value
-    };
+    // --- 1. GERÇEK VERİLERİ ÇEK ---
+    // CSV'den rotaya ait toplam paket sayısını alıyoruz
+    const packageCount = DataStore.getTotalPackages(selectedRouteId);
+    
+    // Opsiyonel: Arayüzde personel sayısı inputu varsa al, yoksa 0 gönder (Backend Otonom Atayacak)
+    const personnelInput = document.getElementById('personnelCount');
+    const personnelCount = personnelInput ? parseInt(personnelInput.value) : 0;
 
-    const payload = API.buildPayload(formData);
+    // --- 2. PYTHON (FASTAPI) PAYLOAD'UNU OLUŞTUR ---
+    // Backend'deki IncidentPayload Pydantic sınıfı ile birebir aynı key'leri kullanıyoruz.
+    const payload = {
+      event_id: `EVT-${selectedRouteId}`,
+      affected_edge: document.getElementById('affectedEdge').value,
+      weather_condition: document.getElementById('weatherCondition').value,
+      traffic_level: document.getElementById('trafficLevel').value,
+      vehicle_type: document.getElementById('vehicleType').value,
+      temperature_c: parseFloat(document.getElementById('temperatureC').value) || 5.0,
+      total_distance_km: parseFloat(document.getElementById('totalDistanceKm').value) || 250.0,
+      
+      // YAPAY ZEKA ARTIK KÖR DEĞİL: Sadece ID değil, Haversine matrisi için GPS verilerini de yolluyoruz
+      stops_to_visit: selectedRouteStops.map(s => ({
+          id: s.stopId,
+          lat: s.lat,
+          lng: s.lng
+      })),
+      
+      package_count: packageCount,
+      personnel_count: personnelCount
+    };
 
     // Loading state
     btn.classList.add('loading');
     btn.innerHTML = '&nbsp; Analyzing...';
 
     try {
-      // 1. Call backend API for ML delay prediction + route optimization
-      let apiResult = null;
-      try {
-        apiResult = await API.optimizeRoute(payload);
-      } catch (apiErr) {
-        console.warn('[Optimize] Backend not available, using frontend-only optimization:', apiErr.message);
+      // 1. Backend'deki Otonom CEO'yu (API) Çağır
+      const apiResult = await API.optimizeRoute(payload);
+
+      if (apiResult && apiResult.status === 'success') {
+          
+        // --- 2. YAPAY ZEKANIN (BACKEND) GERÇEK ROTASINI UYGULA ---
+        // Backend'den gelen ID sıralamasını (Örn: STP-4 -> STP-1 -> STP-3) al
+        const aiRouteIds = apiResult.tactical_decision.new_route;
+        
+        // Durak objelerimizi AI'nın verdiği bu kusursuz sıraya göre diz
+        const optimizedStops = aiRouteIds.map((id, index) => {
+            const stop = selectedRouteStops.find(s => s.stopId === id);
+            if(stop) {
+                return { ...stop, newSeq: index + 1, originalSeq: stop.seq };
+            }
+            return null;
+        }).filter(s => s !== null);
+
+        // --- 3. FİNANSAL VERİLERİ BACKEND'DEN ÇEK (Uydurma rakamlar değil!) ---
+        // Orijinal durumu hesapla (Kıyaslama yapabilmek için)
+        const originalTime = selectedRouteStops.reduce((sum, s) => sum + s.delay, 0) + (routeInfo.planned_duration_min || 0);
+        const originalCost = originalTime * 6.5; // Manuel yönetimin tahmini maliyeti
+
+        // Optimize durumu Backend'den (Opet + Maaş hesaplanmış haliyle) al
+        const optimizedTime = apiResult.tactical_decision.total_estimated_time_minutes;
+        const optimizedCost = apiResult.financial_impact.total_op_cost;
+        const savings = apiResult.financial_impact.fuel_savings;
+
+        // --- 4. ARAYÜZÜ (UI) GÜNCELLE ---
+        // Tabloları doldur
+        document.getElementById('beforeCost').innerText = `₺${originalCost.toFixed(0)}`;
+        document.getElementById('beforeTime').innerText = `${originalTime.toFixed(0)} min`;
+        document.getElementById('afterCost').innerText = `₺${optimizedCost.toFixed(0)}`;
+        document.getElementById('afterTime').innerText = `${optimizedTime.toFixed(0)} min`;
+
+        const gain = (((originalCost - optimizedCost) / originalCost) * 100).toFixed(1);
+        document.getElementById('efficiencyGain').innerText = `%${gain}`;
+        document.getElementById('moneySaved').innerText = `₺${savings} Saved`;
+
+        // ML Sonuç Paneli
+        const header = document.getElementById('resultHeader');
+        header.className = 'result-header success';
+        header.querySelector('h3').textContent = '✅ Optimization Complete';
+        document.getElementById('resultStatus').textContent = 'Success';
+        document.getElementById('resultStatus').className = 'badge badge-success';
+
+        document.getElementById('resDelay').textContent = `+${apiResult.ml_predicted_delay_minutes || 0} min (XGBoost)`;
+        document.getElementById('resAnalysis').textContent = apiResult.analysis; // Araç atama nedeni buraya gelecek
+        document.getElementById('resNewRoute').textContent = aiRouteIds.join(' → ');
+        document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min`;
+
+        // Finansal Açıklama Kartı (XAI)
+        const fAlert = document.getElementById('financialAlert');
+        const sDesc = document.getElementById('savingsDescription');
+        if (fAlert) {
+            fAlert.style.display = 'block';
+            sDesc.innerText = `FlowStation AI: ${apiResult.analysis} Bu operasyonel hamle ile toplam ₺${savings} tasarruf sağlandı.`;
+        }
+
+        resultPanel.classList.add('visible');
+
+        // --- 5. HARİTAYI ÇİZ (Gerçek AI Rotası) ---
+        if (optimizeMapInitialized) {
+            OptimizeMap.showOptimizedRoute(selectedRouteStops, optimizedStops);
+        }
+
+        // --- 6. DURAK TABLOSUNU GÜNCELLE ---
+        renderOptimizedStopTable(optimizedStops);
+
+        showToast('Kâr odaklı optimizasyon tamamlandı!', 'success');
       }
-
-      // 2. Frontend-side stop reordering (works even without backend)
-      const optimizedStops = optimizeStopOrder(selectedRouteStops);
-
-      // Calculate improvement metrics
-      const originalTotalDelay = selectedRouteStops.reduce((sum, s) => sum + s.delay, 0);
-      const worstStops = selectedRouteStops.filter(s => s.delay > 15);
-      const reorderedCount = optimizedStops.filter((s, i) => s.originalSeq !== (i + 1)).length;
-
-      // 3. Animate network graph
-      const mlDelay = apiResult ? apiResult.ml_predicted_delay_minutes : originalTotalDelay / selectedRouteStops.length;
-      const affectedEdge = document.getElementById('affectedEdge').value;
-      const optimalRoute = apiResult ? apiResult.tactical_decision.new_route : ['NodeA', 'NodeC', 'NodeD', 'NodeE'];
-
-      await GraphManager.animateOptimization(affectedEdge, mlDelay, optimalRoute);
-
-      // 4. Show optimized route on map
-      if (optimizeMapInitialized) {
-        OptimizeMap.showOptimizedRoute(selectedRouteStops, optimizedStops);
-      }
-
-      // 5. Update result panel
-      const header = document.getElementById('resultHeader');
-      header.className = 'result-header success';
-      header.querySelector('h3').textContent = '✅ Optimization Complete';
-      document.getElementById('resultStatus').textContent = 'Success';
-      document.getElementById('resultStatus').className = 'badge badge-success';
-
-      document.getElementById('resDelay').textContent = apiResult
-        ? `+${apiResult.ml_predicted_delay_minutes} min (ML predicted)`
-        : `~${(originalTotalDelay / selectedRouteStops.length).toFixed(1)} min avg (from data)`;
-      document.getElementById('resAnalysis').textContent = apiResult
-        ? apiResult.analysis
-        : `${formData.weatherCondition} weather, ${formData.trafficLevel} traffic — ${worstStops.length} critical stops identified`;
-      document.getElementById('resNewRoute').textContent = apiResult
-        ? apiResult.tactical_decision.new_route.join(' → ')
-        : `${reorderedCount} stops reordered for optimal delivery`;
-      document.getElementById('resTotalTime').textContent = apiResult
-        ? `${apiResult.tactical_decision.total_estimated_time_minutes} min`
-        : `${(routeInfo ? routeInfo.planned_duration_min : 0).toFixed(0)} min planned`;
-
-      // --- Financial Calculation ---
-      const UNIT_COST_KM = 0.20;
-      const UNIT_COST_MIN = 0.20;
-
-      const beforeDistance = parseFloat(document.getElementById('totalDistanceKm').value) || 0;
-      const plannedTime = routeInfo ? routeInfo.planned_duration_min : 0;
-      const beforeTimeMin = plannedTime + originalTotalDelay;
-      const beforeCostVal = (beforeDistance * UNIT_COST_KM) + (beforeTimeMin * UNIT_COST_MIN);
-
-      const afterDelayMin = apiResult ? apiResult.ml_predicted_delay_minutes : (originalTotalDelay > 0 ? originalTotalDelay * 0.4 : 0);
-      const afterTimeMin = apiResult ? apiResult.tactical_decision.total_estimated_time_minutes : (plannedTime + afterDelayMin);
-      const afterDistance = beforeDistance; // Distance is constant based on prompt or base route
-
-      const afterCostVal = (afterDistance * UNIT_COST_KM) + (afterTimeMin * UNIT_COST_MIN);
-      const savedCost = beforeCostVal - afterCostVal;
-      const timeSaved = beforeTimeMin - afterTimeMin;
-      const efficiency = beforeTimeMin > 0 ? (timeSaved / beforeTimeMin * 100).toFixed(1) : "0.0";
-
-      document.getElementById('beforeCost').textContent = `$${beforeCostVal.toFixed(2)}`;
-      document.getElementById('beforeTime').textContent = `${beforeTimeMin.toFixed(0)} min`;
-      document.getElementById('afterCost').textContent = `$${afterCostVal.toFixed(2)}`;
-      document.getElementById('afterTime').textContent = `${afterTimeMin.toFixed(0)} min`;
-      document.getElementById('efficiencyGain').textContent = `%${efficiency}`;
-      document.getElementById('moneySaved').textContent = `$${savedCost.toFixed(2)} Saved`;
-
-      const fAlert = document.getElementById('financialAlert');
-      const sDesc = document.getElementById('savingsDescription');
-      if (savedCost > 0) {
-        fAlert.style.display = 'block';
-        sDesc.textContent = `AI optimization saved ${timeSaved.toFixed(0)} minutes. A total of $${savedCost.toFixed(2)} was saved in time and fuel costs.`;
-      } else {
-        fAlert.style.display = 'none';
-      }
-      // -----------------------------
-
-      resultPanel.classList.add('visible');
-
-      // 6. Generate smart dispatcher recommendation
-      const stopsToReorder = optimizedStops.filter((s, i) => s.originalSeq !== (i + 1));
-      let rec = `📋 <strong>Route ${selectedRouteId} Optimization Report:</strong><br><br>`;
-
-      if (worstStops.length > 0) {
-        rec += `⚠️ <strong>${worstStops.length} high-delay stop(s) detected</strong> — `;
-        rec += worstStops.map(s => `Stop #${s.seq} (${s.delay.toFixed(1)} min delay)`).join(', ') + '.<br><br>';
-      }
-
-      if (reorderedCount > 0) {
-        rec += `🔄 <strong>Recommend reordering ${reorderedCount} stop(s):</strong><br>`;
-        stopsToReorder.forEach(s => {
-          rec += `&nbsp;&nbsp;• Move Stop #${s.originalSeq} → position #${s.newSeq}`;
-          if (s.delay > 15) rec += ` <span style="color: var(--danger);">(${s.delay.toFixed(1)} min delay — deliver last)</span>`;
-          rec += '<br>';
-        });
-        rec += '<br>';
-      }
-
-      rec += `📊 Total route delay: <strong>${originalTotalDelay.toFixed(1)} min</strong> across ${selectedRouteStops.length} stops.<br>`;
-      rec += `🎯 Strategy: Prioritize low-delay stops first to minimize cascading delays.`;
-
-      if (apiResult) {
-        rec += `<br><br>🧠 ML Engine predicted <strong>${apiResult.ml_predicted_delay_minutes} min</strong> additional delay on affected segment.`;
-      }
-
-      document.getElementById('recommendation').innerHTML = rec;
-      recCard.style.display = 'block';
-
-      // 7. Update stop delay table with new order
-      renderOptimizedStopTable(optimizedStops);
-
-      showToast(`Route ${selectedRouteId} optimized — ${reorderedCount} stops reordered`, 'success');
 
     } catch (err) {
       console.error('[Optimize] Error:', err);
-
       const header = document.getElementById('resultHeader');
       header.className = 'result-header danger';
       header.querySelector('h3').textContent = '❌ Optimization Failed';
       document.getElementById('resultStatus').textContent = 'Error';
       document.getElementById('resultStatus').className = 'badge badge-danger';
-      document.getElementById('resDelay').textContent = '—';
       document.getElementById('resAnalysis').textContent = err.message;
-      document.getElementById('resNewRoute').textContent = '—';
-      document.getElementById('resTotalTime').textContent = '—';
       resultPanel.classList.add('visible');
-
       showToast(`Optimization failed: ${err.message}`, 'error');
     } finally {
       btn.classList.remove('loading');
       btn.innerHTML = '🧠 Analyze & Optimize';
     }
   }
-
   // ─── Render optimized stop table (shows old vs new order) ───
   function renderOptimizedStopTable(optimizedStops) {
     const tbody = document.getElementById('stopDelayBody');
@@ -700,5 +663,6 @@
   }
 
   // Start
+// Start
   document.addEventListener('DOMContentLoaded', init);
 })();

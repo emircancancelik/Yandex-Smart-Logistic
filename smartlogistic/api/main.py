@@ -16,7 +16,7 @@ app.add_middleware(
 )
 
 
-model = joblib.load('models/gb_delay_predictor.pkl')
+model = joblib.load('/Users/emircancancelik/projects/py_projects/hackathons/smartlogistic/models/gb_delay_predictor.pkl')
 
 class RoutePayload(BaseModel):
     event_id: str
