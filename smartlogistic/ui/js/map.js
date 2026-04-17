@@ -1,32 +1,32 @@
 /* =========================================================
    map.js — Leaflet Map Manager (OSRM Real Road Network)
-   Interactive map showing delivery routes and stops
-   Supports two map instances: dashboard + optimization
+   Interactive map showing delivery routes and stops.
+   Two map instances: dashboard + route optimizer.
    ========================================================= */
 
-// ─── OSRM YARDIMCI FONKSİYONU (Nesnelerin dışında, global) ───
+// ─── OSRM helper: fetch real road geometry ───
 async function fetchOSRMRoute(points) {
-  if (!points || points.length < 2) return points; // En az 2 nokta lazım
-  
-  // OSRM [longitude, latitude] formatını bekler
+  if (!points || points.length < 2) return points;
+
+  // OSRM expects [longitude, latitude]
   const coordString = points.map(p => `${p[1]},${p[0]}`).join(';');
   const url = `https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson`;
 
   try {
     const response = await fetch(url);
-    const data = await response.json();
+    const data     = await response.json();
     if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-      // Gelen veriyi Leaflet'in beklediği [latitude, longitude] formatına geri çevirir
+      // Convert back to Leaflet's [lat, lng] format
       return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
     }
-    return points; // Hata durumunda kuş uçuşu düz çizgiye geri dön
+    return points;
   } catch (err) {
-    console.warn('[OSRM] Yol tarifi alınamadı, düz çizgi kullanılıyor:', err);
+    console.warn('[OSRM] Road directions unavailable, using straight lines:', err);
     return points;
   }
 }
 
-// ─── DASHBOARD HARİTASI ───
+// ─── DASHBOARD MAP ───
 const MapManager = {
   map: null,
   markers: [],
@@ -54,19 +54,20 @@ const MapManager = {
     this.markerGroup.clearLayers();
     this.polylines.forEach(p => this.map.removeLayer(p));
     this.polylines = [];
-    this.markers = [];
+    this.markers   = [];
   },
 
   createStopMarker(stop, routeColor) {
-    const delayColor = stop.delay > 15 ? '#ef4444' :
-                       stop.delay > 5  ? '#f59e0b' : '#10b981';
+    const delayColor = stop.delay > 15 ? '#ef4444'
+                     : stop.delay > 5  ? '#f59e0b'
+                     :                   '#10b981';
 
     const marker = L.circleMarker([stop.lat, stop.lng], {
-      radius: 7,
-      fillColor: delayColor,
-      color: routeColor,
-      weight: 2,
-      opacity: 0.9,
+      radius:      7,
+      fillColor:   delayColor,
+      color:       routeColor,
+      weight:      2,
+      opacity:     0.9,
       fillOpacity: 0.8
     });
 
@@ -89,21 +90,16 @@ const MapManager = {
     return marker;
   },
 
-  // DİKKAT: Artık asenkron (async) çalışıyor
   async plotRoute(routeId, stops, color) {
     if (!stops || stops.length === 0) return;
 
-    const coords = stops.map(s => [s.lat, s.lng]);
-    
-    // OSRM'den gerçek yol koordinatlarını çek
+    const coords     = stops.map(s => [s.lat, s.lng]);
     const roadCoords = await fetchOSRMRoute(coords);
 
-    // Düz çizgi (coords) yerine gerçek yolları (roadCoords) çiz
     const polyline = L.polyline(roadCoords, {
-      color: color,
-      weight: 3,
-      opacity: 0.7,
-      dashArray: null,
+      color,
+      weight:       3,
+      opacity:      0.7,
       smoothFactor: 1.5
     }).addTo(this.map);
 
@@ -117,7 +113,6 @@ const MapManager = {
     });
   },
 
-  // DİKKAT: Çoklu çizim yaparken await kullanabilmek için forEach yerine for...of kullanıldı
   async plotAllRoutes(dataStore, maxRoutes = 15) {
     this.clear();
 
@@ -131,14 +126,14 @@ const MapManager = {
 
     for (let idx = 0; idx < routeIds.length; idx++) {
       const routeId = routeIds[idx];
-      const stops = dataStore.getStopCoordinates(routeId);
-      const color = routeColors[idx % routeColors.length];
-      await this.plotRoute(routeId, stops, color); // Asenkron bekleme
+      const stops   = dataStore.getStopCoordinates(routeId);
+      const color   = routeColors[idx % routeColors.length];
+      await this.plotRoute(routeId, stops, color);
     }
 
     if (this.markers.length > 0) {
       const allCoords = this.markers.map(m => m.getLatLng());
-      const bounds = L.latLngBounds(allCoords);
+      const bounds    = L.latLngBounds(allCoords);
       this.map.fitBounds(bounds, { padding: [30, 30] });
     }
 
@@ -149,38 +144,31 @@ const MapManager = {
     this.polylines.forEach(p => p.setStyle({ opacity: 0.2 }));
     const stops = dataStore.getStopCoordinates(routeId);
     if (stops.length > 0) {
-      // Highlight için basitleştirilmiş düz çizgi kullanabiliriz veya OSRM eklenebilir
       const highlight = L.polyline(
         stops.map(s => [s.lat, s.lng]),
         { color: '#3b82f6', weight: 5, opacity: 1 }
       ).addTo(this.map);
-
       this.polylines.push(highlight);
       const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lng]));
       this.map.fitBounds(bounds, { padding: [50, 50] });
     }
   },
 
-  resetHighlight() {
-    this.polylines.forEach(p => p.setStyle({ opacity: 0.7 }));
-  },
-
   invalidateSize() {
-    if (this.map) {
-      setTimeout(() => this.map.invalidateSize(), 100);
-    }
+    if (this.map) setTimeout(() => this.map.invalidateSize(), 100);
   }
 };
 
 
-// ─── OPTIMIZATION HARİTASI (AI KARARLARI) ───
+// ─── ROUTE OPTIMIZER MAP ───
 const OptimizeMap = {
-  map: null,
+  map:         null,
+  is3D:        false,
   layers: {
-    original: null,
+    original:  null,
     optimized: null,
-    markers: null,
-    labels: null
+    markers:   null,
+    labels:    null
   },
   initialized: false,
 
@@ -200,10 +188,10 @@ const OptimizeMap = {
 
     L.control.zoom({ position: 'topleft' }).addTo(this.map);
 
-    this.layers.original = L.layerGroup().addTo(this.map);
+    this.layers.original  = L.layerGroup().addTo(this.map);
     this.layers.optimized = L.layerGroup().addTo(this.map);
-    this.layers.markers = L.layerGroup().addTo(this.map);
-    this.layers.labels = L.layerGroup().addTo(this.map);
+    this.layers.markers   = L.layerGroup().addTo(this.map);
+    this.layers.labels    = L.layerGroup().addTo(this.map);
 
     this.initialized = true;
     console.log('[OptimizeMap] Initialized');
@@ -215,38 +203,58 @@ const OptimizeMap = {
     });
   },
 
-  // DİKKAT: Artık asenkron çalışıyor
+  // ─── 3D Map Toggle ───
+  toggle3D() {
+    const container = document.getElementById('optimizeMap');
+    if (!container) return;
+
+    this.is3D = !this.is3D;
+    const btn = document.getElementById('btn3DToggle');
+
+    if (this.is3D) {
+      container.style.transformOrigin = '50% 100%';
+      container.style.transform       = 'perspective(900px) rotateX(28deg) scale(1.12)';
+      container.style.transition      = 'transform 0.5s cubic-bezier(0.4,0,0.2,1)';
+      container.style.borderRadius    = '10px';
+      container.style.boxShadow       = '0 30px 80px rgba(0,0,0,0.7)';
+      if (btn) { btn.textContent = '🗺️ 2D View'; btn.classList.add('active'); }
+    } else {
+      container.style.transform    = '';
+      container.style.boxShadow    = '';
+      container.style.borderRadius = '';
+      if (btn) { btn.textContent = '🧊 3D View'; btn.classList.remove('active'); }
+    }
+
+    // Force Leaflet to redraw after transform
+    setTimeout(() => this.map && this.map.invalidateSize(), 520);
+  },
+
   async showRoute(stops, routeId) {
     this.clear();
     if (!stops || stops.length === 0) return;
 
-    const coords = stops.map(s => [s.lat, s.lng]);
-    
-    // Orijinal rota için gerçek yol ağını al
+    const coords     = stops.map(s => [s.lat, s.lng]);
     const roadCoords = await fetchOSRMRoute(coords);
 
     const polyline = L.polyline(roadCoords, {
-      color: '#3b82f6',
-      weight: 4,
-      opacity: 0.8,
+      color:       '#3b82f6',
+      weight:      4,
+      opacity:     0.8,
       smoothFactor: 1.5
     });
     this.layers.original.addLayer(polyline);
 
-    stops.forEach((stop, idx) => {
-      const delayColor = stop.delay > 15 ? '#ef4444' :
-                         stop.delay > 5  ? '#f59e0b' : '#10b981';
-
-      const probColor = stop.delayProb > 0.5 ? '#ef4444' :
-                        stop.delayProb > 0.25 ? '#f59e0b' : '#10b981';
+    stops.forEach(stop => {
+      const delayColor = stop.delay > 15 ? '#ef4444'
+                       : stop.delay > 5  ? '#f59e0b'
+                       :                   '#10b981';
+      const probColor  = stop.delayProb > 0.5  ? '#ef4444'
+                       : stop.delayProb > 0.25 ? '#f59e0b'
+                       :                          '#10b981';
 
       const marker = L.circleMarker([stop.lat, stop.lng], {
-        radius: 12,
-        fillColor: delayColor,
-        color: '#ffffff',
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.9
+        radius: 12, fillColor: delayColor, color: '#ffffff',
+        weight: 2,  opacity: 1, fillOpacity: 0.9
       });
 
       marker.bindPopup(`
@@ -278,21 +286,22 @@ const OptimizeMap = {
       const label = L.divIcon({
         className: 'stop-number-label',
         html: `<div style="
-          width: 20px; height: 20px; 
-          background: ${delayColor}; color: white; 
-          border-radius: 50%; 
+          width: 20px; height: 20px;
+          background: ${delayColor}; color: white;
+          border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           font-size: 10px; font-weight: 700;
           font-family: 'Inter', sans-serif;
           box-shadow: 0 2px 6px rgba(0,0,0,0.3);
           border: 1px solid white;
         ">${stop.seq}</div>`,
-        iconSize: [20, 20],
+        iconSize:   [20, 20],
         iconAnchor: [10, 10]
       });
 
-      const labelMarker = L.marker([stop.lat, stop.lng], { icon: label, interactive: false });
-      this.layers.labels.addLayer(labelMarker);
+      this.layers.labels.addLayer(
+        L.marker([stop.lat, stop.lng], { icon: label, interactive: false })
+      );
     });
 
     const bounds = L.latLngBounds(coords);
@@ -300,56 +309,52 @@ const OptimizeMap = {
     console.log(`[OptimizeMap] Showing route ${routeId} with ${stops.length} stops`);
   },
 
-  // DİKKAT: Artık asenkron çalışıyor
   async showOptimizedRoute(originalStops, optimizedStops) {
+    // Fade out original route
     this.layers.original.eachLayer(layer => {
       if (layer.setStyle) layer.setStyle({ opacity: 0.3, dashArray: '8 4' });
     });
 
-    const coords = optimizedStops.map(s => [s.lat, s.lng]);
-    
-    // AI tarafından optimize edilmiş rota için gerçek yol ağını al
+    const coords     = optimizedStops.map(s => [s.lat, s.lng]);
     const roadCoords = await fetchOSRMRoute(coords);
 
     const optPolyline = L.polyline(roadCoords, {
-      color: '#10b981', // Yeşil (AI Onayı)
-      weight: 5,
-      opacity: 0.9,
+      color:       '#10b981',
+      weight:      5,
+      opacity:     0.9,
       smoothFactor: 1.5
     });
     this.layers.optimized.addLayer(optPolyline);
 
+    // Update numbered labels with new order
     this.layers.labels.clearLayers();
     optimizedStops.forEach((stop, idx) => {
       const label = L.divIcon({
         className: 'stop-number-label',
         html: `<div style="
-          width: 22px; height: 22px; 
-          background: #10b981; color: white; 
-          border-radius: 50%; 
+          width: 22px; height: 22px;
+          background: #10b981; color: white;
+          border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           font-size: 11px; font-weight: 700;
           font-family: 'Inter', sans-serif;
           box-shadow: 0 2px 8px rgba(16,185,129,0.4);
           border: 2px solid white;
         ">${idx + 1}</div>`,
-        iconSize: [22, 22],
+        iconSize:   [22, 22],
         iconAnchor: [11, 11]
       });
-
-      const labelMarker = L.marker([stop.lat, stop.lng], { icon: label, interactive: false });
-      this.layers.labels.addLayer(labelMarker);
+      this.layers.labels.addLayer(
+        L.marker([stop.lat, stop.lng], { icon: label, interactive: false })
+      );
     });
 
     document.getElementById('optMapLegendOriginal').style.display = 'inline-flex';
     document.getElementById('optMapLegendOptimized').style.display = 'inline-flex';
-
     console.log('[OptimizeMap] Optimized route overlay applied');
   },
 
   invalidateSize() {
-    if (this.map) {
-      setTimeout(() => this.map.invalidateSize(), 150);
-    }
+    if (this.map) setTimeout(() => this.map.invalidateSize(), 150);
   }
 };
