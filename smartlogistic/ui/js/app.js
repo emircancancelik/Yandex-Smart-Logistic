@@ -4,13 +4,39 @@
 (function () {
   'use strict';
 
+  // ─── Configuration Loader ───
+  let AppConfig = {
+    fuelPrice: 42,
+    workerWage: 250,
+    vehicleFuelRates: { motorcycle: 0.03, car: 0.07, van: 0.11, truck: 0.19 },
+    
+    async init() {
+      try {
+        const response = await fetch('/config.json');
+        if (response.ok) {
+          const data = await response.json();
+          this.fuelPrice = data.pricing.fuel_price_tl_per_liter || 42;
+          this.workerWage = data.pricing.worker_wage_tl_per_hour || 250;
+          this.vehicleFuelRates = data.pricing.vehicle_fuel_rates || this.vehicleFuelRates;
+          console.log('[Config] Loaded:', { fuelPrice: this.fuelPrice, workerWage: this.workerWage });
+        }
+      } catch (err) {
+        console.warn('[Config] Failed to load config.json, using defaults:', err);
+      }
+    }
+  };
+
   let currentView = 'optimize';
   let analyticsRendered = false;
   let mapInitialized = false;
+  let dashboardMapRendered = false;
   let optimizeMapInitialized = false;
   let selectedRouteId = null;
   let selectedRouteStops = [];
   let dashboardQuery = '';
+  let currentOptimizationOptions = null;
+  let analyticsScriptReady = false;
+  let analyticsScriptPromise = null;
   const registryFilters = {
     query: '',
     vehicle: '',
@@ -62,6 +88,9 @@
   }
 
   function toggleVoice() {
+    if (!voiceRecognition) {
+      initVoiceRecognition();
+    }
     if (!voiceRecognition) return;
     if (voiceActive) {
       voiceRecognition.stop();
@@ -119,7 +148,16 @@
     const info = viewTitles[viewId] || { title: viewId, breadcrumb: '' };
     document.getElementById('pageTitle').textContent = info.title;
     document.getElementById('pageBreadcrumb').textContent = info.breadcrumb;
-    if (viewId === 'dashboard' && mapInitialized) MapManager.invalidateSize();
+    if (viewId === 'dashboard') {
+      if (!mapInitialized) {
+        try { MapManager.init(); mapInitialized = true; }
+        catch (e) { console.warn('[App] Map init failed:', e); }
+      }
+      if (mapInitialized) {
+        MapManager.invalidateSize();
+        renderDashboardMapIfNeeded();
+      }
+    }
     if (viewId === 'optimize') {
       initOptimizeMap();
       if (DataStore.isLoaded && !selectedRouteId) {
@@ -127,9 +165,31 @@
         if (topRoute) handleRouteSelect(topRoute.route_id);
       }
     }
-    if (viewId === 'analytics' && !analyticsRendered && DataStore.isLoaded) { Analytics.render(DataStore); analyticsRendered = true; }
+    if (viewId === 'analytics' && !analyticsRendered && DataStore.isLoaded) {
+      ensureAnalyticsReady().then((ready) => {
+        if (!ready || !window.Analytics) return;
+        window.Analytics.render(DataStore);
+        analyticsRendered = true;
+      });
+    }
     if (viewId === 'routes' && DataStore.isLoaded) renderRoutesTable();
     document.getElementById('sidebar').classList.remove('open');
+  }
+
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.querySelector('.main-content');
+    if (!sidebar || !mainContent) return;
+
+    if (window.innerWidth <= 768) {
+      sidebar.classList.toggle('open');
+      return;
+    }
+
+    sidebar.classList.toggle('collapsed');
+    mainContent.classList.toggle('sidebar-collapsed', sidebar.classList.contains('collapsed'));
+    MapManager.invalidateSize();
+    if (optimizeMapInitialized) OptimizeMap.invalidateSize();
   }
 
   function initOptimizeMap() {
@@ -138,6 +198,45 @@
       catch (e) { console.warn('[App] Optimize map init failed:', e); }
     } else {
       OptimizeMap.invalidateSize();
+    }
+  }
+
+  function renderDashboardMapIfNeeded() {
+    if (!mapInitialized || !DataStore.isLoaded || dashboardMapRendered) return;
+    dashboardMapRendered = true;
+    // Keep dashboard overview lightweight: only a couple of routes, no blocking on initial load.
+    setTimeout(() => {
+      MapManager.plotAllRoutes(DataStore, 2).catch((e) => {
+        console.warn('[App] Dashboard map render failed:', e);
+      });
+    }, 0);
+  }
+
+  async function ensureAnalyticsReady() {
+    if (analyticsScriptReady && window.Analytics) return true;
+    if (analyticsScriptPromise) {
+      await analyticsScriptPromise;
+      return Boolean(window.Analytics);
+    }
+
+    analyticsScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'js/analytics.js';
+      script.async = true;
+      script.onload = () => {
+        analyticsScriptReady = true;
+        resolve();
+      };
+      script.onerror = () => reject(new Error('Failed to load analytics module'));
+      document.body.appendChild(script);
+    });
+
+    try {
+      await analyticsScriptPromise;
+      return Boolean(window.Analytics);
+    } catch (err) {
+      console.warn('[App] Analytics script load failed:', err);
+      return false;
     }
   }
 
@@ -159,11 +258,13 @@
   function handleRouteSelect(routeId) {
     if (!routeId) {
       selectedRouteId = null; selectedRouteStops = [];
+      currentOptimizationOptions = null;
       document.getElementById('optMapStatus').textContent = 'Select a route';
       document.getElementById('stopDelayBody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">Select a route to see stops</td></tr>';
       document.getElementById('stopCount').textContent = '0 stops';
       document.getElementById('dispatcherAlerts').style.display = 'none';
       document.getElementById('resultPanel').classList.remove('visible');
+      document.getElementById('optimizationPriorityPanel')?.remove();
       document.getElementById('recommendationCard').style.display = 'none';
       document.getElementById('optMapLegendOriginal').style.display = 'none';
       document.getElementById('optMapLegendOptimized').style.display = 'none';
@@ -208,6 +309,8 @@
     if (optimizeMapInitialized) OptimizeMap.showRoute(selectedRouteStops, routeId);
     document.getElementById('optMapStatus').textContent = `${routeId} — ${selectedRouteStops.length} stops`;
     document.getElementById('stopCount').textContent = `${selectedRouteStops.length} stops`;
+    currentOptimizationOptions = null;
+    document.getElementById('optimizationPriorityPanel')?.remove();
     renderStopDelayTable(selectedRouteStops);
     generateAlerts(selectedRouteStops, routeId, routeInfo);
     document.getElementById('resultPanel').classList.remove('visible');
@@ -263,13 +366,7 @@
   }
 
   function getVehicleFuelRate(vehicleType) {
-    const rates = {
-      motorcycle: 0.03,
-      car: 0.07,
-      van: 0.11,
-      truck: 0.19
-    };
-    return rates[vehicleType] || rates.van;
+    return AppConfig.vehicleFuelRates[vehicleType] || AppConfig.vehicleFuelRates.van;
   }
 
   function getCrewCountForCost(routeInfo, personnelCount) {
@@ -278,11 +375,9 @@
   }
 
   function calculateOperationalCost(distanceKm, durationMin, vehicleType, crewCount) {
-    const fuelPriceTlPerLiter = 42;
-    const wagePerHourTl = 250;
     const safeCrewCount = Math.max(1, crewCount || 0);
-    const fuelCost = distanceKm * getVehicleFuelRate(vehicleType) * fuelPriceTlPerLiter;
-    const laborCost = safeCrewCount * (durationMin / 60) * wagePerHourTl;
+    const fuelCost = distanceKm * getVehicleFuelRate(vehicleType) * AppConfig.fuelPrice;
+    const laborCost = safeCrewCount * (durationMin / 60) * AppConfig.workerWage;
     return fuelCost + laborCost;
   }
 
@@ -321,48 +416,29 @@
     btn.innerHTML = 'Analyzing...';
 
     try {
-      const apiResult = await API.optimizeRoute(payload);
-      if (apiResult && apiResult.status === 'success') {
-        const aiRouteIds = apiResult.tactical_decision.new_route;
-        const optimizedStops = aiRouteIds.map((id, index) => {
-          const stop = selectedRouteStops.find(s => s.stopId === id);
-          return stop ? { ...stop, newSeq: index + 1, originalSeq: stop.seq } : null;
-        }).filter(Boolean);
-
-        const originalTime = selectedRouteStops.reduce((s, st) => s + st.delay, 0) + (routeInfo.planned_duration_min || 0);
-        const originalDistance = parseFloat(routeInfo?.total_distance_km || document.getElementById('totalDistanceKm').value || '0') || 0;
-        const originalVehicle = routeInfo?.vehicle_type || document.getElementById('vehicleType').value;
-        const originalCrew = getCrewCountForCost(routeInfo, personnelCount);
-        const originalCost = calculateOperationalCost(originalDistance, originalTime, originalVehicle, originalCrew);
-        const optimizedTime = apiResult.tactical_decision.total_estimated_time_minutes;
-        const optimizedDistance = apiResult.tactical_decision.total_distance_km;
-        const optimizedCost = calculateOperationalCost(optimizedDistance, optimizedTime, originalVehicle, originalCrew);
-        const savings = originalCost - optimizedCost;
-
-        document.getElementById('beforeCost').innerText = `₺${originalCost.toFixed(0)}`;
-        document.getElementById('beforeTime').innerText = `${originalTime.toFixed(0)} min`;
-        document.getElementById('afterCost').innerText  = `₺${optimizedCost.toFixed(0)}`;
-        document.getElementById('afterTime').innerText  = `${optimizedTime.toFixed(0)} min`;
-
-        const gain = (((originalCost - optimizedCost) / originalCost) * 100).toFixed(1);
-        document.getElementById('efficiencyGain').innerText = `${gain}%`;
-        document.getElementById('moneySaved').innerText = `₺${Math.max(0, savings).toFixed(0)} Saved`;
-
-        const header = document.getElementById('resultHeader');
-        header.className = 'result-header success';
-        header.querySelector('h3').textContent = 'Optimization Complete';
-        document.getElementById('resultStatus').textContent = 'Success';
-        document.getElementById('resultStatus').className = 'badge badge-success';
-        document.getElementById('resDelay').textContent = `+${apiResult.ml_predicted_delay_minutes || 0} min (XGBoost)`;
-        document.getElementById('resAnalysis').textContent = apiResult.tactical_decision?.action || 'Optimization completed.';
-        document.getElementById('resNewRoute').textContent = aiRouteIds.join(' → ');
-        document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min • ${optimizedDistance.toFixed(1)} km`;
-
-        resultPanel.classList.add('visible');
-        if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(selectedRouteStops, optimizedStops);
-        renderOptimizedStopTable(optimizedStops);
-        showToast('Route optimization completed.', 'success');
+      const balancedResult = await API.optimizeRoute({ ...payload, weight_type: 'balanced' });
+      if (!balancedResult || balancedResult.status !== 'success') {
+        throw new Error('Balanced optimization failed.');
       }
+
+      currentOptimizationOptions = {
+        payload,
+        routeInfo,
+        stops: selectedRouteStops,
+        personnelCount,
+        selectedType: 'balanced',
+        results: {
+          balanced: balancedResult,
+          cost: null,
+          delay: null
+        }
+      };
+
+      displayOptimizationResult(balancedResult, selectedRouteStops, routeInfo, personnelCount, 'balanced');
+      renderOptimizationPriorityPanel('Calculating cost and delay priorities in the background...');
+      resultPanel.classList.add('visible');
+      showToast('Balanced route is ready. Loading other priorities...', 'info');
+      loadAdditionalOptimizationOptions();
     } catch (err) {
       console.error('[Optimize] Error:', err);
       const header = document.getElementById('resultHeader');
@@ -375,6 +451,149 @@
       btn.classList.remove('loading');
       btn.innerHTML = 'Analyze and Optimize';
     }
+  }
+
+  async function loadAdditionalOptimizationOptions() {
+    if (!currentOptimizationOptions) return;
+
+    const { payload } = currentOptimizationOptions;
+    const [costResult, delayResult] = await Promise.allSettled([
+      API.optimizeRoute({ ...payload, weight_type: 'cost' }),
+      API.optimizeRoute({ ...payload, weight_type: 'delay' })
+    ]);
+
+    if (!currentOptimizationOptions) return;
+
+    if (costResult.status === 'fulfilled' && costResult.value?.status === 'success') {
+      currentOptimizationOptions.results.cost = costResult.value;
+    }
+    if (delayResult.status === 'fulfilled' && delayResult.value?.status === 'success') {
+      currentOptimizationOptions.results.delay = delayResult.value;
+    }
+
+    const hasAnyPriority = Boolean(currentOptimizationOptions.results.cost || currentOptimizationOptions.results.delay);
+    renderOptimizationPriorityPanel(hasAnyPriority ? '' : 'Cost and delay priorities could not be loaded.');
+  }
+
+  function getOptimizationLabel(weightType) {
+    const labels = {
+      balanced: 'Balanced',
+      cost: 'Cost Priority',
+      delay: 'Delay Priority'
+    };
+    return labels[weightType] || 'Balanced';
+  }
+
+  function renderOptimizationPriorityPanel(message = '') {
+    const resultPanel = document.getElementById('resultPanel');
+    if (!resultPanel) return;
+
+    let panel = document.getElementById('optimizationPriorityPanel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'optimizationPriorityPanel';
+      panel.className = 'optimization-priority-panel';
+      resultPanel.querySelector('.result-body').appendChild(panel);
+    }
+
+    const results = currentOptimizationOptions?.results || {};
+    const buttons = [];
+
+    if (results.cost) {
+      buttons.push(`<button type="button" class="btn btn-sm optimization-priority-btn" data-type="cost">Prioritize Cost</button>`);
+    }
+    if (results.delay) {
+      buttons.push(`<button type="button" class="btn btn-sm optimization-priority-btn" data-type="delay">Prioritize Delay</button>`);
+    }
+
+    if (buttons.length === 0) {
+      panel.innerHTML = `<div class="optimization-priority-loading">${message || 'Calculating cost and delay priorities in the background...'}</div>`;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="optimization-priority-title">Other priorities</div>
+      <div class="optimization-priority-actions">
+        ${buttons.join('')}
+      </div>
+    `;
+
+    panel.querySelectorAll('.optimization-priority-btn').forEach(button => {
+      button.addEventListener('click', () => selectOptimizationOption(button.dataset.type));
+    });
+
+    updatePriorityButtonState();
+  }
+
+  function updatePriorityButtonState() {
+    const panel = document.getElementById('optimizationPriorityPanel');
+    if (!panel || !currentOptimizationOptions) return;
+
+    panel.querySelectorAll('.optimization-priority-btn').forEach(button => {
+      button.classList.toggle('active', button.dataset.type === currentOptimizationOptions.selectedType);
+    });
+  }
+
+  function selectOptimizationOption(weightType) {
+    if (!currentOptimizationOptions) return;
+
+    const apiResult = currentOptimizationOptions.results?.[weightType];
+    if (!apiResult) return;
+
+    currentOptimizationOptions.selectedType = weightType;
+    displayOptimizationResult(
+      apiResult,
+      currentOptimizationOptions.stops,
+      currentOptimizationOptions.routeInfo,
+      currentOptimizationOptions.personnelCount,
+      weightType
+    );
+    updatePriorityButtonState();
+  }
+
+  function displayOptimizationResult(apiResult, stops, routeInfo, personnelCount, selectedType = 'balanced') {
+    if (!apiResult || apiResult.status !== 'success') return;
+    
+    const aiRouteIds = apiResult.tactical_decision.new_route;
+    const optimizedStops = aiRouteIds.map((id, index) => {
+      const stop = stops.find(s => s.stopId === id);
+      return stop ? { ...stop, newSeq: index + 1, originalSeq: stop.seq } : null;
+    }).filter(Boolean);
+
+    const originalTime = stops.reduce((s, st) => s + st.delay, 0) + (routeInfo?.planned_duration_min || 0);
+    const originalDistance = parseFloat(routeInfo?.total_distance_km || document.getElementById('totalDistanceKm').value || '0') || 0;
+    const originalVehicle = routeInfo?.vehicle_type || document.getElementById('vehicleType').value;
+    const originalCrew = getCrewCountForCost(routeInfo, personnelCount);
+    const originalCost = calculateOperationalCost(originalDistance, originalTime, originalVehicle, originalCrew);
+    
+    const optimizedTime = apiResult.tactical_decision.total_estimated_time_minutes;
+    const optimizedDistance = apiResult.tactical_decision.total_distance_km;
+    const optimizedCost = calculateOperationalCost(optimizedDistance, optimizedTime, originalVehicle, originalCrew);
+    const savings = originalCost - optimizedCost;
+
+    document.getElementById('beforeCost').innerText = `₺${originalCost.toFixed(0)}`;
+    document.getElementById('beforeTime').innerText = `${originalTime.toFixed(0)} min`;
+    document.getElementById('afterCost').innerText  = `₺${optimizedCost.toFixed(0)}`;
+    document.getElementById('afterTime').innerText  = `${optimizedTime.toFixed(0)} min`;
+
+    const gain = (((originalCost - optimizedCost) / originalCost) * 100).toFixed(1);
+    document.getElementById('efficiencyGain').innerText = `${gain}%`;
+    document.getElementById('moneySaved').innerText = `₺${Math.max(0, savings).toFixed(0)} Saved`;
+
+    const header = document.getElementById('resultHeader');
+    header.className = 'result-header success';
+    header.querySelector('h3').textContent = selectedType === 'balanced' ? 'Balanced Route Ready' : `${getOptimizationLabel(selectedType)} Selected`;
+    document.getElementById('resultStatus').textContent = getOptimizationLabel(selectedType);
+    document.getElementById('resultStatus').className = 'badge badge-success';
+    document.getElementById('resDelay').textContent = `+${apiResult.ml_predicted_delay_minutes || 0} min (XGBoost)`;
+    document.getElementById('resAnalysis').textContent = apiResult.tactical_decision?.action || 'Route optimized.';
+    document.getElementById('resNewRoute').textContent = aiRouteIds.join(' → ');
+    document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min • ${optimizedDistance.toFixed(1)} km`;
+
+    if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(stops, optimizedStops);
+    renderOptimizedStopTable(optimizedStops);
+    updatePriorityButtonState();
+    showToast(`${getOptimizationLabel(selectedType)} route displayed.`, 'success');
   }
 
   function renderOptimizedStopTable(optimizedStops) {
@@ -492,11 +711,13 @@
   async function init() {
     console.log('[App] Smart Logistics Dashboard starting...');
 
+    await AppConfig.init();
+
     updateClock();
     setInterval(updateClock, 1000);
 
     document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
-    document.getElementById('mobileMenuBtn').addEventListener('click', () => document.getElementById('sidebar').classList.toggle('open'));
+    document.getElementById('mobileMenuBtn').addEventListener('click', toggleSidebar);
     document.getElementById('btnOptimize').addEventListener('click', handleOptimize);
     document.getElementById('btnMic').addEventListener('click', toggleVoice);
     document.getElementById('optRouteSelect').addEventListener('change', e => handleRouteSelect(e.target.value));
@@ -523,33 +744,38 @@
       renderRoutesTable();
     });
 
-    try { MapManager.init(); mapInitialized = true; } catch (e) { console.warn('[App] Map init failed:', e); }
-
     await loadData();
-
-    initVoiceRecognition();
 
     const backendOnline = await API.healthCheck();
     showToast(backendOnline ? 'Backend API connected' : 'Backend offline — frontend-only mode', backendOnline ? 'success' : 'warning');
     console.log('[App] Dashboard ready!');
   }
 
+  // ─── Spacebar for Optimize ───
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && currentView === 'optimize' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      handleOptimize();
+    }
+  });
+
   async function loadData() {
     try {
       const counts = await DataStore.init();
+      dashboardMapRendered = false;
       showToast(`Loaded ${counts.routes} routes, ${counts.stops} stops`, 'success');
       updateKPIs();
       renderRouteList();
       updateWeatherWidget();
-      if (mapInitialized) MapManager.plotAllRoutes(DataStore, 3);
       populateRouteSelector();
       populateRouteFilters();
       if (currentView === 'optimize') {
         initOptimizeMap();
-        const topRoute = DataStore.getRoutesByDelay()[0];
-        if (topRoute) handleRouteSelect(topRoute.route_id);
       }
-      if (analyticsRendered) Analytics.render(DataStore);
+      if (currentView === 'dashboard') {
+        renderDashboardMapIfNeeded();
+      }
+      if (analyticsRendered && window.Analytics) window.Analytics.render(DataStore);
     } catch (err) {
       console.error('[App] Data loading failed:', err);
       showToast('Failed to load data — check file paths', 'error');

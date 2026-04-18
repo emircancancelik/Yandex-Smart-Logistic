@@ -5,19 +5,41 @@
    ========================================================= */
 
 // ─── OSRM helper: fetch real road geometry ───
+const osrmRouteCache = new Map();
+
+function routeKey(points) {
+  return points
+    .map(p => `${Number(p[0]).toFixed(5)},${Number(p[1]).toFixed(5)}`)
+    .join('|');
+}
+
 async function fetchOSRMRoute(points) {
   if (!points || points.length < 2) return points;
+
+  const key = routeKey(points);
+  if (osrmRouteCache.has(key)) {
+    return osrmRouteCache.get(key);
+  }
 
   // OSRM expects [longitude, latitude]
   const coordString = points.map(p => `${p[1]},${p[0]}`).join(';');
   const url = `https://router.project-osrm.org/route/v1/driving/${coordString}?overview=full&geometries=geojson`;
 
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
     const data     = await response.json();
     if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
       // Convert back to Leaflet's [lat, lng] format
-      return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+      const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+      osrmRouteCache.set(key, coords);
+      if (osrmRouteCache.size > 120) {
+        const firstKey = osrmRouteCache.keys().next().value;
+        osrmRouteCache.delete(firstKey);
+      }
+      return coords;
     }
     return points;
   } catch (err) {
@@ -95,12 +117,19 @@ const MapManager = {
 
     const coords     = stops.map(s => [s.lat, s.lng]);
 
+    // Dashboard must stay responsive: draw straight line immediately.
     const polyline = L.polyline(coords, {
       color,
       weight:       3,
       opacity:      0.7,
       smoothFactor: 1.5
     }).addTo(this.map);
+
+    fetchOSRMRoute(coords).then((roadCoords) => {
+      if (roadCoords && roadCoords.length > 1) {
+        polyline.setLatLngs(roadCoords);
+      }
+    }).catch(() => null);
 
     polyline.bindPopup(`<b>${routeId}</b> — ${stops.length} stops`);
     this.polylines.push(polyline);
@@ -139,12 +168,13 @@ const MapManager = {
     console.log(`[Map] Plotted ${routeIds.length} routes with ${this.markers.length} stops`);
   },
 
-  highlightRoute(routeId, dataStore) {
+  async highlightRoute(routeId, dataStore) {
     this.polylines.forEach(p => p.setStyle({ opacity: 0.2 }));
     const stops = dataStore.getStopCoordinates(routeId);
     if (stops.length > 0) {
+      const routeCoords = await fetchOSRMRoute(stops.map(s => [s.lat, s.lng]));
       const highlight = L.polyline(
-        stops.map(s => [s.lat, s.lng]),
+        routeCoords,
         { color: '#3b82f6', weight: 5, opacity: 1 }
       ).addTo(this.map);
       this.polylines.push(highlight);
@@ -168,6 +198,7 @@ const OptimizeMap = {
     markers:   null,
     labels:    null
   },
+  renderToken: 0,
   initialized: false,
 
   init() {
@@ -204,8 +235,10 @@ const OptimizeMap = {
   async showRoute(stops, routeId) {
     this.clear();
     if (!stops || stops.length === 0) return;
+    const token = ++this.renderToken;
 
     const coords     = stops.map(s => [s.lat, s.lng]);
+
     const polyline = L.polyline(coords, {
       color:       '#3b82f6',
       weight:      4,
@@ -213,6 +246,13 @@ const OptimizeMap = {
       smoothFactor: 1.5
     });
     this.layers.original.addLayer(polyline);
+
+    fetchOSRMRoute(coords).then((roadCoords) => {
+      if (token !== this.renderToken) return;
+      if (roadCoords && roadCoords.length > 1) {
+        polyline.setLatLngs(roadCoords);
+      }
+    }).catch(() => null);
 
     stops.forEach(stop => {
       const delayColor = stop.delay > 15 ? '#ef4444'
@@ -280,12 +320,14 @@ const OptimizeMap = {
   },
 
   async showOptimizedRoute(originalStops, optimizedStops) {
-    // Fade out original route
-    this.layers.original.eachLayer(layer => {
-      if (layer.setStyle) layer.setStyle({ opacity: 0.3, dashArray: '8 4' });
-    });
+    const token = ++this.renderToken;
+
+    // Remove original route overlay and keep only the optimized route.
+    this.layers.original.clearLayers();
+    this.layers.optimized.clearLayers();
 
     const coords     = optimizedStops.map(s => [s.lat, s.lng]);
+
     const optPolyline = L.polyline(coords, {
       color:       '#10b981',
       weight:      5,
@@ -293,6 +335,13 @@ const OptimizeMap = {
       smoothFactor: 1.5
     });
     this.layers.optimized.addLayer(optPolyline);
+
+    fetchOSRMRoute(coords).then((roadCoords) => {
+      if (token !== this.renderToken) return;
+      if (roadCoords && roadCoords.length > 1) {
+        optPolyline.setLatLngs(roadCoords);
+      }
+    }).catch(() => null);
 
     // Update numbered labels with new order
     this.layers.labels.clearLayers();

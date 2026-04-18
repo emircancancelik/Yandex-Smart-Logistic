@@ -1,0 +1,16 @@
+{
+  "pricing": {
+    "fuel_price_tl_per_liter": 75,
+    "worker_wage_tl_per_hour": 250,
+    "vehicle_fuel_rates": {
+      "motorcycle": 0.03,
+      "car": 0.07,
+      "van": 0.11,
+      "truck": 0.19
+    }
+  },
+  "optimization": {
+    "default_crew_size": 2,
+    "use_osrm_for_routes": false
+  }
+}

@@ -50,6 +50,7 @@ class IncidentPayload(BaseModel):
     stops_to_visit: list[StopPoint]
     package_count: int
     personnel_count: int
+    weight_type: str = "balanced"  # cost, balanced, or delay
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -197,7 +198,7 @@ async def optimize_route(payload: IncidentPayload):
             raise HTTPException(status_code=400, detail="At least 2 stops required for optimization.")
 
         # Build distance matrix from real GPS coordinates (Haversine)
-        current_matrix = [[0] * n for _ in range(n)]
+        base_matrix = [[0] * n for _ in range(n)]
         node_ids       = [s.id for s in stops]
 
         for i in range(n):
@@ -207,30 +208,72 @@ async def optimize_route(payload: IncidentPayload):
                         stops[i].lat, stops[i].lng,
                         stops[j].lat, stops[j].lng
                     )
-                    current_matrix[i][j] = int(dist * 10)  # OR-Tools expects integers (x10 scaling)
+                    base_matrix[i][j] = int(dist * 10)  # OR-Tools expects integers (x10 scaling)
 
         # Apply XGBoost delay penalty to the affected edge (XAI)
+        weighted_matrix = copy.deepcopy(base_matrix)
         weather_traffic_reason = ""
+        weight_type = (payload.weight_type or "balanced").lower()
+        if weight_type not in {"cost", "balanced", "delay"}:
+            weight_type = "balanced"
+
+        penalty_multiplier = {
+            "cost": 0.35,
+            "balanced": 1.0,
+            "delay": 3.2,
+        }
+
         affected_nodes = re.findall(r"(?:STP-\d+|Node[A-Z])", payload.affected_edge or "")
         if len(affected_nodes) >= 2:
             u_str, v_str = affected_nodes[0], affected_nodes[1]
             if u_str in node_ids and v_str in node_ids:
                 u_idx, v_idx = node_ids.index(u_str), node_ids.index(v_str)
-                current_matrix[u_idx][v_idx] += (predicted_delay * 100)
-                current_matrix[v_idx][u_idx] += (predicted_delay * 100)
+                edge_penalty = int(predicted_delay * 100 * penalty_multiplier[weight_type])
+                weighted_matrix[u_idx][v_idx] += edge_penalty
+                weighted_matrix[v_idx][u_idx] += edge_penalty
+
+                mode_text = {
+                    "cost": "Cost priority (lighter delay penalty)",
+                    "balanced": "Balanced priority",
+                    "delay": "Delay priority (aggressive delay avoidance)",
+                }[weight_type]
                 weather_traffic_reason = (
                     f"{predicted_delay}-min delay risk on {u_str}–{v_str} "
-                    f"({payload.weather_condition.upper()} weather + {payload.traffic_level} traffic) bypassed."
+                    f"({payload.weather_condition.upper()} weather + {payload.traffic_level} traffic) bypassed. "
+                    f"{mode_text}."
                 )
 
         # Use live fuel prices if available
         res = optimizer.solve(
-            current_matrix,
+            weighted_matrix,
             payload.package_count,
             payload.personnel_count,
             weather_traffic_reason,
-            fuel_prices=_fuel_price_cache
+            fuel_prices=_fuel_price_cache,
+            weight_type=weight_type
         )
+
+        # Delay-priority should not produce a worse ETA than an unweighted delay solve.
+        if weight_type == "delay":
+            baseline_delay_res = optimizer.solve(
+                base_matrix,
+                payload.package_count,
+                payload.personnel_count,
+                weather_traffic_reason,
+                fuel_prices=_fuel_price_cache,
+                weight_type="delay"
+            )
+
+            if baseline_delay_res and not res:
+                res = baseline_delay_res
+
+            if baseline_delay_res and res:
+                if baseline_delay_res["metrics"]["total_estimated_time_minutes"] < res["metrics"]["total_estimated_time_minutes"]:
+                    res = baseline_delay_res
+                    suggestion = res["metrics"].get("efficiency_suggestion", "").strip()
+                    res["metrics"]["efficiency_suggestion"] = (
+                        f"{suggestion} Fallback applied: selected lower-ETA delay route."
+                    ).strip()
 
         if not res:
             raise HTTPException(status_code=400, detail="Optimization engine could not find a solution.")

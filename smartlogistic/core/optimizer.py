@@ -14,10 +14,10 @@ class RouteOptimizer:
 
         # Vehicle specifications
         self.vehicle_specs = {
-            "motorcycle": {"cap": 15,  "l_per_km": 0.04, "default_crew": 1},
-            "car":        {"cap": 35,  "l_per_km": 0.07, "default_crew": 1},
-            "van":        {"cap": 50,  "l_per_km": 0.09, "default_crew": 1},
-            "truck":      {"cap": 200, "l_per_km": 0.28, "default_crew": 2}
+            "motorcycle": {"cap": 15,  "l_per_km": 0.04, "default_crew": 1, "avg_speed_kmh": 48},
+            "car":        {"cap": 35,  "l_per_km": 0.07, "default_crew": 1, "avg_speed_kmh": 55},
+            "van":        {"cap": 50,  "l_per_km": 0.09, "default_crew": 1, "avg_speed_kmh": 45},
+            "truck":      {"cap": 200, "l_per_km": 0.28, "default_crew": 2, "avg_speed_kmh": 35}
         }
 
     def create_data_model(self, distance_matrix: list[list[int]], num_vehicles: int) -> dict:
@@ -32,23 +32,22 @@ class RouteOptimizer:
         package_count: int,
         total_distance_km: float,
         personnel_override: int,
-        fuel_prices: dict | None = None
+        fuel_prices: dict | None = None,
+        weight_type: str = "balanced"
     ):
-        """Selects the cheapest fleet based on live Opet fuel prices and labor costs."""
+        """Selects the optimal fleet based on live Opet fuel prices, labor costs, and optimization weight type."""
         prices = fuel_prices or {}
         fuel_price_tl = prices.get("fuel_tl_per_liter", DEFAULT_FUEL_PRICE_TL)
 
-        best_cost    = float('inf')
+        best_score   = float('inf')
         best_vehicle = "van"
         best_count   = 1
         best_crew    = 1
         best_hours   = 1.0
         best_fuel_cost = 0.0
         best_labor_cost = 0.0
+        best_total_cost = 0.0
         analysis_reason = ""
-
-        # Assumed average speed: 40 km/h
-        est_hours = max(1.0, total_distance_km / 40.0)
 
         for v_type, v_data in self.vehicle_specs.items():
             needed_count = math.ceil(package_count / v_data["cap"])
@@ -58,24 +57,45 @@ class RouteOptimizer:
             fuel_cost  = total_distance_km * v_data["l_per_km"] * fuel_price_tl * needed_count
 
             crew = personnel_override if personnel_override > 0 else v_data["default_crew"]
+            speed_kmh = max(20, v_data.get("avg_speed_kmh", 40))
+            est_hours = max(1.0, total_distance_km / speed_kmh)
             # Labor wage: 250 TL/hour per crew member
             labor_cost = needed_count * crew * est_hours * 250.0
 
             total_cost = fuel_cost + labor_cost
+            est_minutes = est_hours * 60.0
 
-            if total_cost < best_cost:
-                best_cost    = total_cost
+            # Scoring mode:
+            # - cost: minimize total TL
+            # - delay: minimize estimated minutes (cost is secondary tie-breaker)
+            # - balanced: mix both signals
+            if weight_type == "cost":
+                score = total_cost
+            elif weight_type == "delay":
+                score = est_minutes + (total_cost * 0.004)
+            else:
+                score = total_cost + (est_minutes * 7.5)
+
+            if score < best_score:
+                best_score   = score
                 best_vehicle = v_type
                 best_count   = needed_count
                 best_crew    = crew
                 best_hours   = est_hours
                 best_fuel_cost = fuel_cost
                 best_labor_cost = labor_cost
+                best_total_cost = total_cost
+
+                priority_mode = ""
+                if weight_type == "cost":
+                    priority_mode = " (cost-priority)"
+                elif weight_type == "delay":
+                    priority_mode = " (delay-priority)"
 
                 analysis_reason = (
                     f"Using standard fuel price (₺{fuel_price_tl:.2f}/L), "
                     f"{needed_count}x {v_type} with {crew} crew over {est_hours:.1f} hrs "
-                    f"is the lowest-cost option (₺{total_cost:.0f} total)."
+                    f"is the best option{priority_mode} (₺{total_cost:.0f} total)."
                 )
 
         return {
@@ -85,7 +105,7 @@ class RouteOptimizer:
             "estimated_hours": best_hours,
             "fuel_cost_tl": best_fuel_cost,
             "labor_cost_tl": best_labor_cost,
-            "total_op_cost_tl": best_cost,
+            "total_op_cost_tl": best_total_cost,
             "analysis_reason": analysis_reason,
         }
 
@@ -95,13 +115,14 @@ class RouteOptimizer:
         package_count: int,
         personnel_count: int,
         weather_traffic_reason: str,
-        fuel_prices: dict | None = None
+        fuel_prices: dict | None = None,
+        weight_type: str = "balanced"
     ):
         # Rough km estimate for fleet selection
         est_total_km = sum(sum(row) for row in distance_matrix) / (len(distance_matrix) * 10)
 
         fleet = self.select_optimal_fleet(
-            package_count, est_total_km, personnel_count, fuel_prices
+            package_count, est_total_km, personnel_count, fuel_prices, weight_type
         )
         num_vehicles = fleet["vehicle_count"]
 
