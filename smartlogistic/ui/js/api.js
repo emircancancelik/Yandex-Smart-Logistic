@@ -55,8 +55,9 @@ const API = {
       vehicle_type: formData.vehicleType,
       temperature_c: parseFloat(formData.temperatureC) || 15.0,
       total_distance_km: parseFloat(formData.totalDistanceKm) || 200.0,
-      source_node: formData.sourceNode || 'NodeA',
-      target_node: formData.targetNode || 'NodeE'
+      stops_to_visit: formData.stopsToVisit || [],
+      package_count: parseInt(formData.packageCount, 10) || 0,
+      personnel_count: parseInt(formData.personnelCount, 10) || 0
     };
   }
 };

@@ -72,7 +72,7 @@ const MapManager = {
     });
 
     marker.bindPopup(`
-      <div style="font-family: 'Inter', sans-serif; min-width: 180px;">
+      <div style="font-family: 'Space Grotesk', sans-serif; min-width: 180px;">
         <div style="font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #1e293b;">
           📍 Stop #${stop.seq} — ${stop.stopId}
         </div>
@@ -94,9 +94,8 @@ const MapManager = {
     if (!stops || stops.length === 0) return;
 
     const coords     = stops.map(s => [s.lat, s.lng]);
-    const roadCoords = await fetchOSRMRoute(coords);
 
-    const polyline = L.polyline(roadCoords, {
+    const polyline = L.polyline(coords, {
       color,
       weight:       3,
       opacity:      0.7,
@@ -163,7 +162,6 @@ const MapManager = {
 // ─── ROUTE OPTIMIZER MAP ───
 const OptimizeMap = {
   map:         null,
-  is3D:        false,
   layers: {
     original:  null,
     optimized: null,
@@ -180,7 +178,7 @@ const OptimizeMap = {
       attributionControl: true
     }).setView([39.55, 37.15], 10);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '© OpenStreetMap © CARTO',
       subdomains: 'abcd',
       maxZoom: 19
@@ -203,40 +201,12 @@ const OptimizeMap = {
     });
   },
 
-  // ─── 3D Map Toggle ───
-  toggle3D() {
-    const container = document.getElementById('optimizeMap');
-    if (!container) return;
-
-    this.is3D = !this.is3D;
-    const btn = document.getElementById('btn3DToggle');
-
-    if (this.is3D) {
-      container.style.transformOrigin = '50% 100%';
-      container.style.transform       = 'perspective(900px) rotateX(28deg) scale(1.12)';
-      container.style.transition      = 'transform 0.5s cubic-bezier(0.4,0,0.2,1)';
-      container.style.borderRadius    = '10px';
-      container.style.boxShadow       = '0 30px 80px rgba(0,0,0,0.7)';
-      if (btn) { btn.textContent = '🗺️ 2D View'; btn.classList.add('active'); }
-    } else {
-      container.style.transform    = '';
-      container.style.boxShadow    = '';
-      container.style.borderRadius = '';
-      if (btn) { btn.textContent = '🧊 3D View'; btn.classList.remove('active'); }
-    }
-
-    // Force Leaflet to redraw after transform
-    setTimeout(() => this.map && this.map.invalidateSize(), 520);
-  },
-
   async showRoute(stops, routeId) {
     this.clear();
     if (!stops || stops.length === 0) return;
 
     const coords     = stops.map(s => [s.lat, s.lng]);
-    const roadCoords = await fetchOSRMRoute(coords);
-
-    const polyline = L.polyline(roadCoords, {
+    const polyline = L.polyline(coords, {
       color:       '#3b82f6',
       weight:      4,
       opacity:     0.8,
@@ -258,7 +228,7 @@ const OptimizeMap = {
       });
 
       marker.bindPopup(`
-        <div style="font-family: 'Inter', sans-serif; min-width: 220px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; min-width: 220px;">
           <div style="font-weight: 700; font-size: 14px; margin-bottom: 8px; color: #1e293b;">
             📍 Stop #${stop.seq} — ${stop.stopId}
           </div>
@@ -291,7 +261,7 @@ const OptimizeMap = {
           border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           font-size: 10px; font-weight: 700;
-          font-family: 'Inter', sans-serif;
+          font-family: 'Space Grotesk', sans-serif;
           box-shadow: 0 2px 6px rgba(0,0,0,0.3);
           border: 1px solid white;
         ">${stop.seq}</div>`,
@@ -316,9 +286,7 @@ const OptimizeMap = {
     });
 
     const coords     = optimizedStops.map(s => [s.lat, s.lng]);
-    const roadCoords = await fetchOSRMRoute(coords);
-
-    const optPolyline = L.polyline(roadCoords, {
+    const optPolyline = L.polyline(coords, {
       color:       '#10b981',
       weight:      5,
       opacity:     0.9,
@@ -337,7 +305,7 @@ const OptimizeMap = {
           border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           font-size: 11px; font-weight: 700;
-          font-family: 'Inter', sans-serif;
+          font-family: 'Space Grotesk', sans-serif;
           box-shadow: 0 2px 8px rgba(16,185,129,0.4);
           border: 2px solid white;
         ">${idx + 1}</div>`,

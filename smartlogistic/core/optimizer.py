@@ -5,10 +5,8 @@ from ortools.constraint_solver import pywrapcp
 
 logging.basicConfig(level=logging.INFO)
 
-# Default Opet fuel prices (TL/liter) — updated from live Opet API
-DEFAULT_OPET_DIESEL   = 73.52
-DEFAULT_OPET_GASOLINE = 64.49
-DEFAULT_OPET_LPG      = 16.80
+# Standard fuel unit price (TL/liter) used for all vehicle cost calculations.
+DEFAULT_FUEL_PRICE_TL = 73.52
 
 class RouteOptimizer:
     def __init__(self, depot_index: int = 0):
@@ -16,9 +14,10 @@ class RouteOptimizer:
 
         # Vehicle specifications
         self.vehicle_specs = {
-            "motorcycle": {"cap": 15,  "fuel": "gasoline", "l_per_km": 0.04, "default_crew": 1},
-            "van":        {"cap": 50,  "fuel": "diesel",   "l_per_km": 0.09, "default_crew": 1},
-            "truck":      {"cap": 200, "fuel": "diesel",   "l_per_km": 0.28, "default_crew": 2}
+            "motorcycle": {"cap": 15,  "l_per_km": 0.04, "default_crew": 1},
+            "car":        {"cap": 35,  "l_per_km": 0.07, "default_crew": 1},
+            "van":        {"cap": 50,  "l_per_km": 0.09, "default_crew": 1},
+            "truck":      {"cap": 200, "l_per_km": 0.28, "default_crew": 2}
         }
 
     def create_data_model(self, distance_matrix: list[list[int]], num_vehicles: int) -> dict:
@@ -37,12 +36,15 @@ class RouteOptimizer:
     ):
         """Selects the cheapest fleet based on live Opet fuel prices and labor costs."""
         prices = fuel_prices or {}
-        diesel_price   = prices.get("diesel_tl_per_liter",   DEFAULT_OPET_DIESEL)
-        gasoline_price = prices.get("gasoline_tl_per_liter", DEFAULT_OPET_GASOLINE)
+        fuel_price_tl = prices.get("fuel_tl_per_liter", DEFAULT_FUEL_PRICE_TL)
 
         best_cost    = float('inf')
         best_vehicle = "van"
         best_count   = 1
+        best_crew    = 1
+        best_hours   = 1.0
+        best_fuel_cost = 0.0
+        best_labor_cost = 0.0
         analysis_reason = ""
 
         # Assumed average speed: 40 km/h
@@ -53,8 +55,7 @@ class RouteOptimizer:
             if needed_count > 15:
                 continue  # More than 15 units is impractical
 
-            price_per_liter = diesel_price if v_data["fuel"] == "diesel" else gasoline_price
-            fuel_cost  = total_distance_km * v_data["l_per_km"] * price_per_liter * needed_count
+            fuel_cost  = total_distance_km * v_data["l_per_km"] * fuel_price_tl * needed_count
 
             crew = personnel_override if personnel_override > 0 else v_data["default_crew"]
             # Labor wage: 250 TL/hour per crew member
@@ -66,14 +67,27 @@ class RouteOptimizer:
                 best_cost    = total_cost
                 best_vehicle = v_type
                 best_count   = needed_count
+                best_crew    = crew
+                best_hours   = est_hours
+                best_fuel_cost = fuel_cost
+                best_labor_cost = labor_cost
 
                 analysis_reason = (
-                    f"Using live Opet prices (₺{price_per_liter:.2f}/L), "
+                    f"Using standard fuel price (₺{fuel_price_tl:.2f}/L), "
                     f"{needed_count}x {v_type} with {crew} crew over {est_hours:.1f} hrs "
                     f"is the lowest-cost option (₺{total_cost:.0f} total)."
                 )
 
-        return best_vehicle, best_count, analysis_reason, best_cost
+        return {
+            "vehicle_type": best_vehicle,
+            "vehicle_count": best_count,
+            "crew_count": best_crew,
+            "estimated_hours": best_hours,
+            "fuel_cost_tl": best_fuel_cost,
+            "labor_cost_tl": best_labor_cost,
+            "total_op_cost_tl": best_cost,
+            "analysis_reason": analysis_reason,
+        }
 
     def solve(
         self,
@@ -86,12 +100,13 @@ class RouteOptimizer:
         # Rough km estimate for fleet selection
         est_total_km = sum(sum(row) for row in distance_matrix) / (len(distance_matrix) * 10)
 
-        vehicle_type, num_vehicles, suggestion, op_cost = self.select_optimal_fleet(
+        fleet = self.select_optimal_fleet(
             package_count, est_total_km, personnel_count, fuel_prices
         )
+        num_vehicles = fleet["vehicle_count"]
 
         # XAI: combine weather/traffic reason with fleet selection reason
-        final_analysis = f"{weather_traffic_reason} {suggestion}".strip()
+        final_analysis = f"{weather_traffic_reason} {fleet['analysis_reason']}".strip()
 
         data    = self.create_data_model(distance_matrix, num_vehicles)
         manager = pywrapcp.RoutingIndexManager(
@@ -122,24 +137,43 @@ class RouteOptimizer:
 
         if solution:
             routes     = []
-            total_dist = 0
+            total_dist_km = 0.0
             for vehicle_id in range(num_vehicles):
                 index = routing.Start(vehicle_id)
                 route = []
                 while not routing.IsEnd(index):
                     node = manager.IndexToNode(index)
                     route.append(node)
-                    index = solution.Value(routing.NextVar(index))
+                    next_index = solution.Value(routing.NextVar(index))
+                    from_node = manager.IndexToNode(index)
+                    to_node = manager.IndexToNode(next_index)
+                    total_dist_km += data['distance_matrix'][from_node][to_node] / 10.0
+                    index = next_index
                 route.append(manager.IndexToNode(index))
                 routes.append(route)
+
+            # Keep time estimate transparent and unit-correct.
+            total_estimated_time_minutes = (total_dist_km / 40.0) * 60.0
+            fuel_savings_tl = fleet["total_op_cost_tl"] * 0.22
 
             return {
                 "routes": routes,
                 "metrics": {
-                    "efficiency_suggestion":  final_analysis,
-                    "operational_cost_tl":    round(op_cost, 2),
-                    "fuel_savings_tl":        round(op_cost * 0.22, 2),  # 22% autonomous saving estimate
-                    "total_distance_km":      est_total_km
-                }
+                    "efficiency_suggestion": final_analysis,
+                    "fuel_savings_tl": round(fuel_savings_tl, 2),  # 22% autonomous saving estimate
+                    "total_distance_km": round(total_dist_km, 2),
+                    "total_estimated_time_minutes": round(total_estimated_time_minutes, 2),
+                    "fleet": {
+                        "vehicle_type": fleet["vehicle_type"],
+                        "vehicle_count": fleet["vehicle_count"],
+                        "crew_count": fleet["crew_count"],
+                        "estimated_hours": round(fleet["estimated_hours"], 2),
+                    },
+                    "costs": {
+                        "fuel_cost_tl": round(fleet["fuel_cost_tl"], 2),
+                        "labor_cost_tl": round(fleet["labor_cost_tl"], 2),
+                        "total_op_cost_tl": round(fleet["total_op_cost_tl"], 2),
+                    },
+                },
             }
         return None

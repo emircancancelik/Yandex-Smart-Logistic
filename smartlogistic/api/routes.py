@@ -7,10 +7,11 @@ import os
 import math
 import copy
 import httpx
+import re
 from datetime import datetime, timezone
 
 from core.predictor import DelayPredictor
-from core.optimizer import RouteOptimizer, DEFAULT_OPET_DIESEL, DEFAULT_OPET_GASOLINE, DEFAULT_OPET_LPG
+from core.optimizer import RouteOptimizer, DEFAULT_FUEL_PRICE_TL
 
 app = FastAPI(title="FlowStation Smart Logistics Orchestrator")
 
@@ -26,11 +27,9 @@ optimizer = RouteOptimizer(depot_index=0)
 
 # ─── In-memory fuel price cache ───
 _fuel_price_cache = {
-    "gasoline_tl_per_liter": DEFAULT_OPET_GASOLINE,
-    "diesel_tl_per_liter":   DEFAULT_OPET_DIESEL,
-    "lpg_tl_per_liter":      DEFAULT_OPET_LPG,
-    "source":                "fallback",
-    "updated_at":            datetime.now(timezone.utc).isoformat()
+    "fuel_tl_per_liter": DEFAULT_FUEL_PRICE_TL,
+    "source": "fallback",
+    "updated_at": datetime.now(timezone.utc).isoformat()
 }
 
 
@@ -166,13 +165,13 @@ async def get_fuel_prices(lat: float = None, lng: float = None):
                     elif "lpg" in name or "otogaz" in name:
                         lpg = price
 
-                if gasoline and diesel:
+                if gasoline or diesel or lpg:
+                    # Single fuel pricing parameter for dispatcher workflow.
+                    fuel_price_tl = diesel or gasoline or lpg or DEFAULT_FUEL_PRICE_TL
                     _fuel_price_cache = {
-                        "gasoline_tl_per_liter": gasoline,
-                        "diesel_tl_per_liter":   diesel,
-                        "lpg_tl_per_liter":      lpg or DEFAULT_OPET_LPG,
-                        "source":                f"opet_api_live ({province_name})",
-                        "updated_at":            datetime.now(timezone.utc).isoformat()
+                        "fuel_tl_per_liter": fuel_price_tl,
+                        "source": f"opet_api_live ({province_name})",
+                        "updated_at": datetime.now(timezone.utc).isoformat()
                     }
                     return _fuel_price_cache
 
@@ -212,8 +211,9 @@ async def optimize_route(payload: IncidentPayload):
 
         # Apply XGBoost delay penalty to the affected edge (XAI)
         weather_traffic_reason = ""
-        if "-" in payload.affected_edge:
-            u_str, v_str = payload.affected_edge.split("-")
+        affected_nodes = re.findall(r"(?:STP-\d+|Node[A-Z])", payload.affected_edge or "")
+        if len(affected_nodes) >= 2:
+            u_str, v_str = affected_nodes[0], affected_nodes[1]
             if u_str in node_ids and v_str in node_ids:
                 u_idx, v_idx = node_ids.index(u_str), node_ids.index(v_str)
                 current_matrix[u_idx][v_idx] += (predicted_delay * 100)
@@ -236,22 +236,42 @@ async def optimize_route(payload: IncidentPayload):
             raise HTTPException(status_code=400, detail="Optimization engine could not find a solution.")
 
         optimized_route_ids = [node_ids[idx] for idx in res["routes"][0]]
+        # OR-Tools route closes the tour by returning to the depot; UI expects unique stop order only.
+        if len(optimized_route_ids) > 1 and optimized_route_ids[0] == optimized_route_ids[-1]:
+            optimized_route_ids = optimized_route_ids[:-1]
 
         return {
             "status": "success",
             "event_id": payload.event_id,
+            "ml_predicted_delay_minutes": predicted_delay,
             "analysis": res["metrics"]["efficiency_suggestion"],
+            "ml_metrics": {
+                "affected_edge": payload.affected_edge,
+                "predicted_delay_min": predicted_delay,
+            },
             "financial_impact": {
-                "fuel_savings":   res["metrics"]["fuel_savings_tl"],
-                "total_op_cost":  res["metrics"]["operational_cost_tl"]
+                "fuel_savings_tl": res["metrics"]["fuel_savings_tl"],
+                "fuel_cost_tl": res["metrics"]["costs"]["fuel_cost_tl"],
+                "labor_cost_tl": res["metrics"]["costs"]["labor_cost_tl"],
+                "total_op_cost_tl": res["metrics"]["costs"]["total_op_cost_tl"],
+            },
+            "optimization": {
+                "fleet": res["metrics"]["fleet"],
+                "eta": {
+                    "total_estimated_time_minutes": res["metrics"]["total_estimated_time_minutes"],
+                    "total_distance_km": res["metrics"]["total_distance_km"],
+                },
             },
             "tactical_decision": {
-                "action":                       "Profit-focused stop ordering complete.",
-                "new_route":                    optimized_route_ids,
-                "total_estimated_time_minutes": res["metrics"]["total_distance_km"]
-            }
+                "action": "Profit-focused stop ordering complete.",
+                "new_route": optimized_route_ids,
+                "total_estimated_time_minutes": res["metrics"]["total_estimated_time_minutes"],
+                "total_distance_km": res["metrics"]["total_distance_km"],
+            },
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

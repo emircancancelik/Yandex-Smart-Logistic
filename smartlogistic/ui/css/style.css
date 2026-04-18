@@ -4,37 +4,37 @@
    ========================================================= */
 
 /* ---------- Google Fonts ---------- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 /* ---------- CSS Variables ---------- */
 :root {
   /* Color Palette */
-  --bg-primary:    #0a0e1a;
-  --bg-secondary:  #111827;
-  --bg-card:       #1a2236;
-  --bg-card-hover: #1e2942;
-  --bg-glass:      rgba(26, 34, 54, 0.65);
+  --bg-primary:    #f4f7fb;
+  --bg-secondary:  #eaf0f7;
+  --bg-card:       #ffffff;
+  --bg-card-hover: #f8fbff;
+  --bg-glass:      rgba(255, 255, 255, 0.85);
 
-  --accent-primary:   #3b82f6;
-  --accent-secondary: #8b5cf6;
-  --accent-gradient:  linear-gradient(135deg, #3b82f6, #8b5cf6);
-  --accent-glow:      0 0 20px rgba(59, 130, 246, 0.3);
+  --accent-primary:   #0f6cbd;
+  --accent-secondary: #0b4f8a;
+  --accent-gradient:  linear-gradient(135deg, #0f6cbd, #0b4f8a);
+  --accent-glow:      0 0 20px rgba(15, 108, 189, 0.2);
 
-  --success:  #10b981;
-  --warning:  #f59e0b;
-  --danger:   #ef4444;
-  --info:     #06b6d4;
+  --success:  #127b3a;
+  --warning:  #b56a00;
+  --danger:   #b42318;
+  --info:     #0f6cbd;
 
-  --text-primary:   #f1f5f9;
-  --text-secondary: #94a3b8;
+  --text-primary:   #0f172a;
+  --text-secondary: #334155;
   --text-muted:     #64748b;
 
-  --border-color:   rgba(148, 163, 184, 0.1);
-  --border-active:  rgba(59, 130, 246, 0.4);
+  --border-color:   rgba(15, 23, 42, 0.08);
+  --border-active:  rgba(15, 108, 189, 0.35);
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
 
   /* Spacing */
   --sidebar-width: 260px;
@@ -78,8 +78,9 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
-    radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.04) 0%, transparent 50%);
+    radial-gradient(circle at 16% 16%, rgba(15, 108, 189, 0.08) 0%, transparent 46%),
+    radial-gradient(circle at 82% 72%, rgba(18, 123, 58, 0.06) 0%, transparent 44%),
+    linear-gradient(180deg, #f7fafe 0%, #eef3f9 100%);
   z-index: -1;
   pointer-events: none;
 }
@@ -107,7 +108,7 @@ input, select, textarea { font-family: inherit; }
   top: 0;
   width: var(--sidebar-width);
   height: 100vh;
-  background: var(--bg-secondary);
+  background: #0f2238;
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -181,7 +182,7 @@ input, select, textarea { font-family: inherit; }
   gap: 12px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: #c7d5e8;
   font-size: 0.9rem;
   font-weight: 500;
   transition: all var(--transition-fast);
@@ -192,14 +193,14 @@ input, select, textarea { font-family: inherit; }
 }
 
 .nav-item:hover {
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 .nav-item.active {
-  background: rgba(59, 130, 246, 0.12);
-  color: var(--accent-primary);
-  border-color: var(--border-active);
+  background: rgba(15, 108, 189, 0.26);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .nav-item .nav-icon {
@@ -266,7 +267,7 @@ input, select, textarea { font-family: inherit; }
   justify-content: space-between;
   padding: 0 28px;
   height: var(--header-height);
-  background: var(--bg-secondary);
+  background: rgba(255, 255, 255, 0.9);
   border-bottom: 1px solid var(--border-color);
   position: sticky;
   top: 0;
@@ -373,6 +374,7 @@ input, select, textarea { font-family: inherit; }
 
 .card:hover {
   border-color: var(--border-active);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
 }
 
 .card-header {
@@ -543,7 +545,7 @@ input, select, textarea { font-family: inherit; }
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: var(--bg-secondary);
+  background: #f8fbff;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   transition: all var(--transition-fast);
@@ -551,7 +553,7 @@ input, select, textarea { font-family: inherit; }
 }
 
 .route-item:hover {
-  background: var(--bg-card-hover);
+  background: #eef5fc;
   border-color: var(--border-active);
 }
 
@@ -616,7 +618,7 @@ input, select, textarea { font-family: inherit; }
 
 .form-control {
   padding: 10px 14px;
-  background: var(--bg-secondary);
+  background: #f8fbff;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -789,7 +791,7 @@ input, select, textarea { font-family: inherit; }
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
+  background: #f2f7fd;
   position: sticky;
   top: 0;
 }
@@ -851,6 +853,12 @@ input, select, textarea { font-family: inherit; }
   gap: 20px;
 }
 
+@media (max-width: 1480px) {
+  .optimize-main-grid {
+    grid-template-columns: 1fr 360px;
+  }
+}
+
 .map-container #optimizeMap {
   width: 100%;
   height: 100%;
@@ -888,84 +896,13 @@ input, select, textarea { font-family: inherit; }
   gap: 20px;
 }
 
-/* ========== NETWORK GRAPH SVG ========== */
-.network-graph {
-  width: 100%;
-  height: 260px;
-}
-
-.network-graph .node-circle {
-  fill: var(--bg-card);
-  stroke: var(--accent-primary);
-  stroke-width: 2;
-  transition: all var(--transition-fast);
-  cursor: pointer;
-}
-
-.network-graph .node-circle:hover {
-  fill: rgba(59, 130, 246, 0.2);
-  stroke-width: 3;
-}
-
-.network-graph .node-circle.active {
-  fill: var(--accent-primary);
-  stroke: white;
-}
-
-.network-graph .node-circle.affected {
-  fill: rgba(239, 68, 68, 0.3);
-  stroke: var(--danger);
-  stroke-dasharray: 5 3;
-}
-
-.network-graph .edge-line {
-  stroke: var(--text-muted);
-  stroke-width: 2;
-  fill: none;
-  transition: all var(--transition-fast);
-}
-
-.network-graph .edge-line.active {
-  stroke: var(--accent-primary);
-  stroke-width: 3;
-}
-
-.network-graph .edge-line.affected {
-  stroke: var(--danger);
-  stroke-width: 3;
-  stroke-dasharray: 8 4;
-}
-
-.network-graph .edge-line.optimal {
-  stroke: var(--success);
-  stroke-width: 3;
-}
-
-.network-graph .node-label {
-  fill: var(--text-primary);
-  font-size: 12px;
-  font-weight: 700;
-  text-anchor: middle;
-  dominant-baseline: central;
-  font-family: var(--font-sans);
-  pointer-events: none;
-}
-
-.network-graph .edge-weight {
-  fill: var(--text-secondary);
-  font-size: 10px;
-  font-family: var(--font-mono);
-  text-anchor: middle;
-  dominant-baseline: central;
-}
-
 /* ========== WEATHER WIDGET ========== */
 .weather-widget {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 16px;
-  background: var(--bg-secondary);
+  background: #f2f7fd;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
 }
@@ -1192,7 +1129,7 @@ input, select, textarea { font-family: inherit; }
 
 .stat-item {
   padding: 16px;
-  background: var(--bg-secondary);
+  background: #f2f7fd;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   text-align: center;
@@ -1240,18 +1177,6 @@ input, select, textarea { font-family: inherit; }
 @keyframes mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
   50%       { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
-}
-
-/* ========== 3D TOGGLE BUTTON ========== */
-#btn3DToggle {
-  transition: all var(--transition-fast);
-}
-
-#btn3DToggle.active {
-  background: rgba(139, 92, 246, 0.2);
-  color: #a78bfa;
-  border-color: rgba(139, 92, 246, 0.5);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
 }
 
 /* Smooth 3D map container */

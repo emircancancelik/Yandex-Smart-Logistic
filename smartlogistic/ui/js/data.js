@@ -175,5 +175,37 @@ getTotalPackages(routeId) {
   /** Get unique route IDs */
   getRouteIds() {
     return [...new Set(this.routeStops.map(s => s.route_id))];
+  },
+
+  /** Get unique values for a route field */
+  getUniqueRouteValues(field) {
+    return [...new Set(this.routes.map(r => String(r[field] || '').trim()).filter(Boolean))].sort();
+  },
+
+  /** Filter routes for registry/search */
+  filterRoutes(filters = {}) {
+    const query = String(filters.query || '').trim().toLowerCase();
+    const vehicle = String(filters.vehicle || '').trim().toLowerCase();
+    const weather = String(filters.weather || '').trim().toLowerCase();
+    const traffic = String(filters.traffic || '').trim().toLowerCase();
+
+    return this.routes.filter(route => {
+      const routeId = String(route.route_id || '').toLowerCase();
+      const vehicleType = String(route.vehicle_type || '').toLowerCase();
+      const weatherCondition = String(route.weather_condition || '').toLowerCase();
+      const trafficLevel = String(route.traffic_level || '').toLowerCase();
+
+      const queryMatch = !query ||
+        routeId.includes(query) ||
+        vehicleType.includes(query) ||
+        weatherCondition.includes(query) ||
+        trafficLevel.includes(query);
+
+      const vehicleMatch = !vehicle || vehicleType === vehicle;
+      const weatherMatch = !weather || weatherCondition === weather;
+      const trafficMatch = !traffic || trafficLevel === traffic;
+
+      return queryMatch && vehicleMatch && weatherMatch && trafficMatch;
+    });
   }
 };

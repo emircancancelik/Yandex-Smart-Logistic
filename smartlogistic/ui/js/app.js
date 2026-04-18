@@ -10,7 +10,13 @@
   let optimizeMapInitialized = false;
   let selectedRouteId = null;
   let selectedRouteStops = [];
-  let liveFuelPrices = null;
+  let dashboardQuery = '';
+  const registryFilters = {
+    query: '',
+    vehicle: '',
+    weather: '',
+    traffic: ''
+  };
 
   // ─── Voice Recognition ───
   let voiceRecognition = null;
@@ -34,7 +40,7 @@
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript.toLowerCase().trim();
         if (transcript.includes('calculate')) {
-          showToast('🎤 Voice command: Calculate — running optimization...', 'info');
+          showToast('Voice command recognized. Running optimization.', 'info');
           handleOptimize();
           voiceRecognition.stop();
           voiceActive = false;
@@ -63,7 +69,7 @@
     } else {
       voiceRecognition.start();
       voiceActive = true;
-      showToast('🎤 Listening... say "calculate" to optimize the route', 'info');
+      showToast('Listening. Say "calculate" to optimize the selected route.', 'info');
     }
     updateMicButton(voiceActive);
   }
@@ -73,10 +79,10 @@
     if (!btn) return;
     if (active) {
       btn.classList.add('mic-active');
-      btn.innerHTML = '🔴 Listening...';
+      btn.innerHTML = 'Listening...';
     } else {
       btn.classList.remove('mic-active');
-      btn.innerHTML = '🎤 Voice';
+      btn.innerHTML = 'Voice';
     }
   }
 
@@ -99,10 +105,10 @@
 
   // ─── Navigation ───
   const viewTitles = {
-    dashboard: { title: 'Dashboard', breadcrumb: 'Real-time monitoring' },
-    optimize:  { title: 'Route Optimizer', breadcrumb: 'AI-powered delay prediction & stop reordering' },
+    dashboard: { title: 'Operations Dashboard', breadcrumb: 'Real-time monitoring' },
+    optimize:  { title: 'Route Optimizer', breadcrumb: 'AI delay prediction and stop reordering' },
     analytics: { title: 'Analytics', breadcrumb: 'Historical performance data' },
-    routes:    { title: 'All Routes', breadcrumb: 'Complete route database' }
+    routes:    { title: 'Route Registry', breadcrumb: 'Complete route database' }
   };
 
   function switchView(viewId) {
@@ -114,7 +120,13 @@
     document.getElementById('pageTitle').textContent = info.title;
     document.getElementById('pageBreadcrumb').textContent = info.breadcrumb;
     if (viewId === 'dashboard' && mapInitialized) MapManager.invalidateSize();
-    if (viewId === 'optimize') initOptimizeMap();
+    if (viewId === 'optimize') {
+      initOptimizeMap();
+      if (DataStore.isLoaded && !selectedRouteId) {
+        const topRoute = DataStore.getRoutesByDelay()[0];
+        if (topRoute) handleRouteSelect(topRoute.route_id);
+      }
+    }
     if (viewId === 'analytics' && !analyticsRendered && DataStore.isLoaded) { Analytics.render(DataStore); analyticsRendered = true; }
     if (viewId === 'routes' && DataStore.isLoaded) renderRoutesTable();
     document.getElementById('sidebar').classList.remove('open');
@@ -127,50 +139,6 @@
     } else {
       OptimizeMap.invalidateSize();
     }
-  }
-
-  // ─── Fuel Prices ───
-  async function loadFuelPrices() {
-    try {
-      let lat = null, lng = null;
-      if (navigator.geolocation) {
-        try {
-          const pos = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
-          });
-          lat = pos.coords.latitude;
-          lng = pos.coords.longitude;
-        } catch (geoErr) {
-          console.warn('[Fuel] Geolocation failed or denied:', geoErr.message);
-        }
-      }
-      
-      const url = new URL(`${API.BASE_URL}/api/v1/fuel-prices`);
-      if (lat && lng) {
-        url.searchParams.append('lat', lat);
-        url.searchParams.append('lng', lng);
-      }
-      
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Fuel price endpoint unavailable');
-      liveFuelPrices = await res.json();
-      renderFuelPricesWidget(liveFuelPrices);
-    } catch (e) {
-      console.warn('[Fuel] Could not load live prices:', e.message);
-      liveFuelPrices = { gasoline_tl_per_liter: 64.49, diesel_tl_per_liter: 73.52, lpg_tl_per_liter: 16.80, source: 'fallback' };
-      renderFuelPricesWidget(liveFuelPrices);
-    }
-  }
-
-  function renderFuelPricesWidget(prices) {
-    const el = document.getElementById('fuelPricesBar');
-    if (!el || !prices) return;
-    const src = prices.source === 'opet_api_live' ? '🟢 Live' : '⚡ Cached';
-    el.innerHTML = `
-      <div class="fuel-price-item"><span class="fuel-icon">⛽</span><span class="fuel-label">Gasoline</span><span class="fuel-value">₺${prices.gasoline_tl_per_liter.toFixed(2)}/L</span></div>
-      <div class="fuel-price-item"><span class="fuel-icon">🛢️</span><span class="fuel-label">Diesel</span><span class="fuel-value">₺${prices.diesel_tl_per_liter.toFixed(2)}/L</span></div>
-      <div class="fuel-price-item"><span class="fuel-icon">🔵</span><span class="fuel-label">LPG</span><span class="fuel-value">₺${prices.lpg_tl_per_liter.toFixed(2)}/L</span></div>
-      <div class="fuel-source">${src} Opet Prices</div>`;
   }
 
   // ─── Route Selector ───
@@ -200,7 +168,7 @@
       document.getElementById('optMapLegendOriginal').style.display = 'none';
       document.getElementById('optMapLegendOptimized').style.display = 'none';
       if (optimizeMapInitialized) OptimizeMap.clear();
-      GraphManager.reset();
+      if (window.GraphManager?.reset) window.GraphManager.reset();
       return;
     }
     selectedRouteId = routeId;
@@ -246,8 +214,8 @@
     document.getElementById('recommendationCard').style.display = 'none';
     document.getElementById('optMapLegendOriginal').style.display = 'none';
     document.getElementById('optMapLegendOptimized').style.display = 'none';
-    GraphManager.reset();
-    showToast(`Route ${routeId} loaded — ${selectedRouteStops.length} stops on map`, 'info');
+    if (window.GraphManager?.reset) window.GraphManager.reset();
+    showToast(`Route ${routeId} loaded with ${selectedRouteStops.length} stops`, 'info');
   }
 
   function renderStopDelayTable(stops) {
@@ -255,8 +223,8 @@
     tbody.innerHTML = stops.map(s => {
       const dB = s.delay > 15 ? 'badge-danger' : s.delay > 5 ? 'badge-warning' : 'badge-success';
       const pB = s.delayProb > 0.5 ? 'badge-danger' : s.delayProb > 0.25 ? 'badge-warning' : 'badge-success';
-      const status = s.delay > 15 ? '⚠️ High' : s.delay > 5 ? '🟡 Med' : '✅ OK';
-      const mw = s.missedWindow ? '❌ Missed' : '✅ In window';
+      const status = s.delay > 15 ? 'High' : s.delay > 5 ? 'Medium' : 'On time';
+      const mw = s.missedWindow ? 'Missed' : 'In window';
       return `<tr><td class="mono"><strong>${s.seq}</strong></td><td style="font-size:.78rem;">${s.stopId}</td><td style="font-size:.78rem;">${s.roadType}</td><td><span class="badge ${dB}">${s.delay.toFixed(1)} min</span></td><td><span class="badge ${pB}">${(s.delayProb*100).toFixed(0)}%</span></td><td style="font-size:.72rem;">${mw}</td><td style="font-size:.78rem;">${status}</td></tr>`;
     }).join('');
   }
@@ -267,24 +235,62 @@
     const alertCount = document.getElementById('alertCount');
     const alerts = [];
     stops.forEach(s => {
-      if (s.delay > 15) alerts.push({ icon: '⚠️', text: `<strong>Delay ${s.delay.toFixed(1)} min</strong> at Stop #${s.seq} (${s.stopId}) — ${s.roadType} road, ${(s.delayProb*100).toFixed(0)}% delay probability.` });
+      if (s.delay > 15) alerts.push({ icon: '!', text: `<strong>Delay ${s.delay.toFixed(1)} min</strong> at Stop #${s.seq} (${s.stopId}) on ${s.roadType} road, ${(s.delayProb*100).toFixed(0)}% delay probability.` });
     });
     const missed = stops.filter(s => s.missedWindow);
-    if (missed.length > 0) alerts.push({ icon: '❌', text: `<strong>${missed.length} stop(s) missed time window.</strong> Stops: ${missed.map(s => '#' + s.seq).join(', ')}. Recommend notifying customers.` });
+    if (missed.length > 0) alerts.push({ icon: '!', text: `<strong>${missed.length} stop(s) missed time window.</strong> Stops: ${missed.map(s => '#' + s.seq).join(', ')}. Recommend notifying customers.` });
     const totalDelay = routeInfo ? (routeInfo.total_delay_min || 0) : 0;
-    if (totalDelay > 100) alerts.push({ icon: '🚨', text: `<strong>Route ${routeId} has ${totalDelay.toFixed(0)} min total delay.</strong> Consider splitting route or reassigning stops.` });
+    if (totalDelay > 100) alerts.push({ icon: '!', text: `<strong>Route ${routeId} has ${totalDelay.toFixed(0)} min total delay.</strong> Consider splitting route or reassigning stops.` });
     const mountain = stops.filter(s => s.roadType === 'mountain');
-    if (mountain.length > 2) alerts.push({ icon: '🏔️', text: `<strong>${mountain.length} stops on mountain roads.</strong> High delay risk in bad weather.` });
-    if (alerts.length === 0) alerts.push({ icon: '✅', text: 'No critical alerts for this route. All stops within acceptable parameters.' });
+    if (mountain.length > 2) alerts.push({ icon: '!', text: `<strong>${mountain.length} stops on mountain roads.</strong> High delay risk in adverse weather.` });
+    if (alerts.length === 0) alerts.push({ icon: 'i', text: 'No critical alerts for this route. All stops are within acceptable thresholds.' });
     alertCount.textContent = `${alerts.length} alert${alerts.length !== 1 ? 's' : ''}`;
     alertsList.innerHTML = alerts.map(a => `<div class="alert-item"><span class="alert-icon">${a.icon}</span><span class="alert-text">${a.text}</span></div>`).join('');
     alertsCard.style.display = 'block';
   }
 
+  function validateOptimizationForm() {
+    const temperature = parseFloat(document.getElementById('temperatureC').value);
+    const distance = parseFloat(document.getElementById('totalDistanceKm').value);
+    const personnel = parseInt(document.getElementById('personnelCount')?.value || '0', 10);
+
+    if (!selectedRouteId) return 'Select a route before optimization.';
+    if (Number.isNaN(temperature) || temperature < -30 || temperature > 60) return 'Temperature must be between -30 and 60 C.';
+    if (Number.isNaN(distance) || distance <= 0 || distance > 1500) return 'Distance must be between 1 and 1500 km.';
+    if (Number.isNaN(personnel) || personnel < 0 || personnel > 20) return 'Personnel count must be between 0 and 20.';
+    if (selectedRouteStops.length < 2) return 'At least two stops are required for optimization.';
+    return '';
+  }
+
+  function getVehicleFuelRate(vehicleType) {
+    const rates = {
+      motorcycle: 0.03,
+      car: 0.07,
+      van: 0.11,
+      truck: 0.19
+    };
+    return rates[vehicleType] || rates.van;
+  }
+
+  function getCrewCountForCost(routeInfo, personnelCount) {
+    if (Number.isInteger(personnelCount) && personnelCount > 0) return personnelCount;
+    return routeInfo?.crew_count || routeInfo?.driver_count || 2;
+  }
+
+  function calculateOperationalCost(distanceKm, durationMin, vehicleType, crewCount) {
+    const fuelPriceTlPerLiter = 42;
+    const wagePerHourTl = 250;
+    const safeCrewCount = Math.max(1, crewCount || 0);
+    const fuelCost = distanceKm * getVehicleFuelRate(vehicleType) * fuelPriceTlPerLiter;
+    const laborCost = safeCrewCount * (durationMin / 60) * wagePerHourTl;
+    return fuelCost + laborCost;
+  }
+
   // ─── Optimize ───
   async function handleOptimize() {
-    if (!selectedRouteId || selectedRouteStops.length === 0) {
-      showToast('Please select a route first', 'warning');
+    const validationError = validateOptimizationForm();
+    if (validationError) {
+      showToast(validationError, 'warning');
       return;
     }
     const btn = document.getElementById('btnOptimize');
@@ -294,9 +300,13 @@
     const personnelInput = document.getElementById('personnelCount');
     const personnelCount = personnelInput ? parseInt(personnelInput.value) : 0;
 
+    const affectedEdge = selectedRouteStops.length >= 2
+      ? `${selectedRouteStops[0].stopId}-${selectedRouteStops[1].stopId}`
+      : document.getElementById('affectedEdge').value;
+
     const payload = {
       event_id: `EVT-${selectedRouteId}`,
-      affected_edge: document.getElementById('affectedEdge').value,
+      affected_edge: affectedEdge,
       weather_condition: document.getElementById('weatherCondition').value,
       traffic_level: document.getElementById('trafficLevel').value,
       vehicle_type: document.getElementById('vehicleType').value,
@@ -308,7 +318,7 @@
     };
 
     btn.classList.add('loading');
-    btn.innerHTML = '⏳ Analyzing...';
+    btn.innerHTML = 'Analyzing...';
 
     try {
       const apiResult = await API.optimizeRoute(payload);
@@ -320,10 +330,14 @@
         }).filter(Boolean);
 
         const originalTime = selectedRouteStops.reduce((s, st) => s + st.delay, 0) + (routeInfo.planned_duration_min || 0);
-        const originalCost = originalTime * 6.5;
+        const originalDistance = parseFloat(routeInfo?.total_distance_km || document.getElementById('totalDistanceKm').value || '0') || 0;
+        const originalVehicle = routeInfo?.vehicle_type || document.getElementById('vehicleType').value;
+        const originalCrew = getCrewCountForCost(routeInfo, personnelCount);
+        const originalCost = calculateOperationalCost(originalDistance, originalTime, originalVehicle, originalCrew);
         const optimizedTime = apiResult.tactical_decision.total_estimated_time_minutes;
-        const optimizedCost = apiResult.financial_impact.total_op_cost;
-        const savings = apiResult.financial_impact.fuel_savings;
+        const optimizedDistance = apiResult.tactical_decision.total_distance_km;
+        const optimizedCost = calculateOperationalCost(optimizedDistance, optimizedTime, originalVehicle, originalCrew);
+        const savings = originalCost - optimizedCost;
 
         document.getElementById('beforeCost').innerText = `₺${originalCost.toFixed(0)}`;
         document.getElementById('beforeTime').innerText = `${originalTime.toFixed(0)} min`;
@@ -332,41 +346,34 @@
 
         const gain = (((originalCost - optimizedCost) / originalCost) * 100).toFixed(1);
         document.getElementById('efficiencyGain').innerText = `${gain}%`;
-        document.getElementById('moneySaved').innerText = `₺${savings} Saved`;
+        document.getElementById('moneySaved').innerText = `₺${Math.max(0, savings).toFixed(0)} Saved`;
 
         const header = document.getElementById('resultHeader');
         header.className = 'result-header success';
-        header.querySelector('h3').textContent = '✅ Optimization Complete';
+        header.querySelector('h3').textContent = 'Optimization Complete';
         document.getElementById('resultStatus').textContent = 'Success';
         document.getElementById('resultStatus').className = 'badge badge-success';
         document.getElementById('resDelay').textContent = `+${apiResult.ml_predicted_delay_minutes || 0} min (XGBoost)`;
-        document.getElementById('resAnalysis').textContent = apiResult.analysis;
+        document.getElementById('resAnalysis').textContent = apiResult.tactical_decision?.action || 'Optimization completed.';
         document.getElementById('resNewRoute').textContent = aiRouteIds.join(' → ');
-        document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min`;
-
-        const fAlert = document.getElementById('financialAlert');
-        const sDesc  = document.getElementById('savingsDescription');
-        if (fAlert) {
-          fAlert.style.display = 'block';
-          sDesc.innerText = `FlowStation AI: ${apiResult.analysis} Total savings: ₺${savings}.`;
-        }
+        document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min • ${optimizedDistance.toFixed(1)} km`;
 
         resultPanel.classList.add('visible');
         if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(selectedRouteStops, optimizedStops);
         renderOptimizedStopTable(optimizedStops);
-        showToast('Route optimization complete!', 'success');
+        showToast('Route optimization completed.', 'success');
       }
     } catch (err) {
       console.error('[Optimize] Error:', err);
       const header = document.getElementById('resultHeader');
       header.className = 'result-header danger';
-      header.querySelector('h3').textContent = '❌ Optimization Failed';
+      header.querySelector('h3').textContent = 'Optimization Failed';
       document.getElementById('resAnalysis').textContent = err.message;
       resultPanel.classList.add('visible');
       showToast(`Optimization failed: ${err.message}`, 'error');
     } finally {
       btn.classList.remove('loading');
-      btn.innerHTML = '🧠 Analyze & Optimize';
+      btn.innerHTML = 'Analyze and Optimize';
     }
   }
 
@@ -377,7 +384,7 @@
       const pB = s.delayProb > 0.5 ? 'badge-danger' : s.delayProb > 0.25 ? 'badge-warning' : 'badge-success';
       const moved = s.originalSeq !== s.newSeq;
       const movedBadge = moved ? `<span style="color:var(--success);font-size:.7rem;">(was #${s.originalSeq})</span>` : '';
-      const status = moved ? '🔄 Moved' : '✅ OK';
+      const status = moved ? 'Reordered' : 'Unchanged';
       return `<tr style="${moved ? 'background:rgba(16,185,129,0.04);' : ''}"><td class="mono"><strong>${s.newSeq}</strong> ${movedBadge}</td><td style="font-size:.78rem;">${s.stopId}</td><td style="font-size:.78rem;">${s.roadType}</td><td><span class="badge ${dB}">${s.delay.toFixed(1)} min</span></td><td><span class="badge ${pB}">${(s.delayProb*100).toFixed(0)}%</span></td><td style="font-size:.72rem;">—</td><td style="font-size:.78rem;">${status}</td></tr>`;
     }).join('');
   }
@@ -393,7 +400,13 @@
 
   function renderRouteList() {
     const list = document.getElementById('routeList');
-    const routes = DataStore.getRoutesByDelay().slice(0, 20);
+    const routes = DataStore.getRoutesByDelay()
+      .filter(r => {
+        if (!dashboardQuery) return true;
+        const q = dashboardQuery.toLowerCase();
+        return String(r.route_id || '').toLowerCase().includes(q) || String(r.vehicle_type || '').toLowerCase().includes(q);
+      })
+      .slice(0, 20);
     list.innerHTML = routes.map(r => {
       const delay = r.total_delay_min || 0;
       const status = delay > 60 ? 'critical' : delay > 20 ? 'delayed' : 'on-time';
@@ -403,7 +416,15 @@
   }
 
   window.appHighlightRoute = function (routeId) {
-    if (mapInitialized) { MapManager.highlightRoute(routeId, DataStore); showToast(`Showing route ${routeId} on map`, 'info'); }
+    if (mapInitialized) { MapManager.highlightRoute(routeId, DataStore); }
+    window.appSelectOptimizeRoute(routeId);
+    showToast(`Route ${routeId} selected for dispatch`, 'info');
+  };
+
+  window.appSelectOptimizeRoute = function (routeId) {
+    const select = document.getElementById('optRouteSelect');
+    if (select) select.value = routeId;
+    handleRouteSelect(routeId);
   };
 
   function updateWeatherWidget() {
@@ -417,7 +438,7 @@
 
   function renderRoutesTable() {
     const tbody = document.getElementById('routesTableBody');
-    const routes = DataStore.routes;
+    const routes = DataStore.filterRoutes(registryFilters);
     document.getElementById('routeCountBadge').textContent = `${routes.length} routes`;
     tbody.innerHTML = routes.map(r => {
       const delay = r.total_delay_min || 0;
@@ -427,10 +448,36 @@
     }).join('');
   }
 
+  function populateRouteFilters() {
+    const vehicleSelect = document.getElementById('routesVehicleFilter');
+    const weatherSelect = document.getElementById('routesWeatherFilter');
+    const trafficSelect = document.getElementById('routesTrafficFilter');
+    if (!vehicleSelect || !weatherSelect || !trafficSelect) return;
+
+    const addOptions = (el, values) => {
+      const first = el.options[0] ? el.options[0].outerHTML : '';
+      el.innerHTML = first;
+      values.forEach(value => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value.charAt(0).toUpperCase() + value.slice(1);
+        el.appendChild(opt);
+      });
+    };
+
+    addOptions(vehicleSelect, DataStore.getUniqueRouteValues('vehicle_type'));
+    addOptions(weatherSelect, DataStore.getUniqueRouteValues('weather_condition'));
+    addOptions(trafficSelect, DataStore.getUniqueRouteValues('traffic_level'));
+  }
+
   let sortAsc = false;
   function toggleSortRoutes() {
     sortAsc = !sortAsc;
-    const routes = DataStore.getRoutesByDelay();
+    const routes = DataStore.getRoutesByDelay().filter(r => {
+      if (!dashboardQuery) return true;
+      const q = dashboardQuery.toLowerCase();
+      return String(r.route_id || '').toLowerCase().includes(q) || String(r.vehicle_type || '').toLowerCase().includes(q);
+    });
     if (sortAsc) routes.reverse();
     const list = document.getElementById('routeList');
     list.innerHTML = routes.slice(0, 20).map(r => {
@@ -455,11 +502,30 @@
     document.getElementById('optRouteSelect').addEventListener('change', e => handleRouteSelect(e.target.value));
     document.getElementById('btnSortRoutes').addEventListener('click', toggleSortRoutes);
     document.getElementById('btnRefresh').addEventListener('click', async () => { showToast('Refreshing data...', 'info'); await loadData(); });
+    document.getElementById('routeSearchInput')?.addEventListener('input', (e) => {
+      dashboardQuery = e.target.value.trim();
+      renderRouteList();
+    });
+    document.getElementById('routesSearch')?.addEventListener('input', (e) => {
+      registryFilters.query = e.target.value;
+      renderRoutesTable();
+    });
+    document.getElementById('routesVehicleFilter')?.addEventListener('change', (e) => {
+      registryFilters.vehicle = e.target.value;
+      renderRoutesTable();
+    });
+    document.getElementById('routesWeatherFilter')?.addEventListener('change', (e) => {
+      registryFilters.weather = e.target.value;
+      renderRoutesTable();
+    });
+    document.getElementById('routesTrafficFilter')?.addEventListener('change', (e) => {
+      registryFilters.traffic = e.target.value;
+      renderRoutesTable();
+    });
 
     try { MapManager.init(); mapInitialized = true; } catch (e) { console.warn('[App] Map init failed:', e); }
 
     await loadData();
-    await loadFuelPrices();
 
     initVoiceRecognition();
 
@@ -475,8 +541,14 @@
       updateKPIs();
       renderRouteList();
       updateWeatherWidget();
-      if (mapInitialized) MapManager.plotAllRoutes(DataStore, 15);
+      if (mapInitialized) MapManager.plotAllRoutes(DataStore, 3);
       populateRouteSelector();
+      populateRouteFilters();
+      if (currentView === 'optimize') {
+        initOptimizeMap();
+        const topRoute = DataStore.getRoutesByDelay()[0];
+        if (topRoute) handleRouteSelect(topRoute.route_id);
+      }
       if (analyticsRendered) Analytics.render(DataStore);
     } catch (err) {
       console.error('[App] Data loading failed:', err);

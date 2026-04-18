@@ -10,7 +10,7 @@ const Analytics = {
   setDefaults() {
     Chart.defaults.color = '#94a3b8';
     Chart.defaults.borderColor = 'rgba(148, 163, 184, 0.1)';
-    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.font.family = "'Space Grotesk', sans-serif";
     Chart.defaults.font.size = 12;
     Chart.defaults.plugins.legend.labels.usePointStyle = true;
     Chart.defaults.plugins.legend.labels.padding = 16;
