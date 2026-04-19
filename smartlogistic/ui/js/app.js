@@ -27,7 +27,6 @@
   };
 
   let currentView = 'optimize';
-  let analyticsRendered = false;
   let mapInitialized = false;
   let dashboardMapRendered = false;
   let optimizeMapInitialized = false;
@@ -36,8 +35,6 @@
   let dashboardQuery = '';
   let routeMessages = {};
   let currentOptimizationOptions = null;
-  let analyticsScriptReady = false;
-  let analyticsScriptPromise = null;
   const registryFilters = {
     query: '',
     vehicle: '',
@@ -137,7 +134,6 @@
   const viewTitles = {
     dashboard: { title: 'Operations Dashboard', breadcrumb: 'Real-time monitoring' },
     optimize:  { title: 'Route Optimizer', breadcrumb: 'AI delay prediction and stop reordering' },
-    analytics: { title: 'Analytics', breadcrumb: 'Historical performance data' },
     routes:    { title: 'Route Registry', breadcrumb: 'Complete route database' }
   };
 
@@ -160,13 +156,6 @@
         const topRoute = DataStore.getRoutesByDelay()[0];
         if (topRoute) handleRouteSelect(topRoute.route_id);
       }
-    }
-    if (viewId === 'analytics' && !analyticsRendered && DataStore.isLoaded) {
-      ensureAnalyticsReady().then((ready) => {
-        if (!ready || !window.Analytics) return;
-        window.Analytics.render(DataStore);
-        analyticsRendered = true;
-      });
     }
     if (viewId === 'routes' && DataStore.isLoaded) renderRoutesTable();
     document.getElementById('sidebar').classList.remove('open');
@@ -206,34 +195,6 @@
         console.warn('[App] Dashboard map render failed:', e);
       });
     }, 0);
-  }
-
-  async function ensureAnalyticsReady() {
-    if (analyticsScriptReady && window.Analytics) return true;
-    if (analyticsScriptPromise) {
-      await analyticsScriptPromise;
-      return Boolean(window.Analytics);
-    }
-
-    analyticsScriptPromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'js/analytics.js';
-      script.async = true;
-      script.onload = () => {
-        analyticsScriptReady = true;
-        resolve();
-      };
-      script.onerror = () => reject(new Error('Failed to load analytics module'));
-      document.body.appendChild(script);
-    });
-
-    try {
-      await analyticsScriptPromise;
-      return Boolean(window.Analytics);
-    } catch (err) {
-      console.warn('[App] Analytics script load failed:', err);
-      return false;
-    }
   }
 
   // ─── Route Selector ───
@@ -1158,7 +1119,6 @@
         renderDashboardInsights();
         renderDashboardMapIfNeeded();
       }
-      if (analyticsRendered && window.Analytics) window.Analytics.render(DataStore);
     } catch (err) {
       console.error('[App] Data loading failed:', err);
       showToast('Failed to load data — check file paths', 'error');

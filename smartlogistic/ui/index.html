@@ -6,7 +6,6 @@
   <meta name="description" content="Smart Logistics — Real-time delivery route optimization dashboard. AI-powered delay prediction and route recalculation.">
   <title>Smart Logistics — Dispatcher Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -23,7 +22,6 @@
         <div class="nav-section-title">Main</div>
         <button class="nav-item active" data-view="optimize" id="nav-optimize"><span class="nav-icon">◈</span>Route Optimizer<span class="nav-badge">AI</span></button>
         <button class="nav-item" data-view="dashboard" id="nav-dashboard"><span class="nav-icon">▦</span>Operations Dashboard</button>
-        <button class="nav-item" data-view="analytics" id="nav-analytics"><span class="nav-icon">◲</span>Performance Analytics</button>
         <div class="nav-section-title" style="margin-top:16px;">Data</div>
         <button class="nav-item" data-view="routes" id="nav-routes"><span class="nav-icon">▤</span>Route Registry</button>
       </nav>
@@ -304,25 +302,6 @@
           <input type="hidden" id="totalDistanceKm" value="250">
           <input type="hidden" id="sourceNode" value="NodeA">
           <input type="hidden" id="targetNode" value="NodeE">
-        </div>
-
-        <!-- =================== ANALYTICS =================== -->
-        <div class="view" id="view-analytics">
-          <div class="stat-row" id="analyticsSummary">
-            <div class="stat-item"><div class="stat-number" id="statTotalRoutes">—</div><div class="stat-label">Total Routes</div></div>
-            <div class="stat-item"><div class="stat-number" id="statAvgDelay" style="color:var(--warning);">—</div><div class="stat-label">Avg Delay (min)</div></div>
-            <div class="stat-item"><div class="stat-number" id="statMaxDelay" style="color:var(--danger);">—</div><div class="stat-label">Max Delay (min)</div></div>
-            <div class="stat-item"><div class="stat-number" id="statAvgOnTime" style="color:var(--success);">—</div><div class="stat-label">Avg On-Time %</div></div>
-            <div class="stat-item"><div class="stat-number" id="statTotalDistance">—</div><div class="stat-label">Total KM Driven</div></div>
-          </div>
-          <div class="charts-grid">
-            <div class="card"><div class="card-header"><h3>Delay by Weather Condition</h3></div><div class="card-body"><div class="chart-container"><canvas id="chartDelayByWeather"></canvas></div></div></div>
-            <div class="card"><div class="card-header"><h3>Delay by Traffic Level</h3></div><div class="card-body"><div class="chart-container"><canvas id="chartDelayByTraffic"></canvas></div></div></div>
-          </div>
-          <div class="charts-grid">
-            <div class="card"><div class="card-header"><h3>Vehicle Type Distribution</h3></div><div class="card-body"><div class="chart-container"><canvas id="chartVehicleType"></canvas></div></div></div>
-            <div class="card"><div class="card-header"><h3>On-Time Rate Distribution</h3></div><div class="card-body"><div class="chart-container"><canvas id="chartOnTimeRate"></canvas></div></div></div>
-          </div>
         </div>
 
         <!-- =================== ALL ROUTES =================== -->
