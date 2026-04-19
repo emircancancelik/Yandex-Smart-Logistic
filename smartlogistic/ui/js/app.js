@@ -34,6 +34,7 @@
   let selectedRouteId = null;
   let selectedRouteStops = [];
   let dashboardQuery = '';
+  let routeMessages = {};
   let currentOptimizationOptions = null;
   let analyticsScriptReady = false;
   let analyticsScriptPromise = null;
@@ -149,13 +150,8 @@
     document.getElementById('pageTitle').textContent = info.title;
     document.getElementById('pageBreadcrumb').textContent = info.breadcrumb;
     if (viewId === 'dashboard') {
-      if (!mapInitialized) {
-        try { MapManager.init(); mapInitialized = true; }
-        catch (e) { console.warn('[App] Map init failed:', e); }
-      }
-      if (mapInitialized) {
-        MapManager.invalidateSize();
-        renderDashboardMapIfNeeded();
+      if (DataStore.isLoaded) {
+        renderDashboardInsights();
       }
     }
     if (viewId === 'optimize') {
@@ -255,6 +251,115 @@
     });
   }
 
+  function formatNoteTimestamp(value) {
+    if (!value) return '';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toLocaleString('en-GB', { hour12: false });
+  }
+
+  function getRouteMessage(routeId) {
+    if (!routeId) return null;
+    const entry = routeMessages[routeId];
+    if (!entry || !String(entry.message || '').trim()) return null;
+    return {
+      routeId,
+      message: String(entry.message || '').trim(),
+      updatedAt: entry.updatedAt || '',
+      responses: Array.isArray(entry.responses) ? entry.responses : []
+    };
+  }
+
+  function persistRouteMessages() {
+    try {
+      localStorage.setItem('smartlogistic.routeMessages', JSON.stringify(routeMessages));
+    } catch {
+      // Keep in-memory state if storage is unavailable.
+    }
+  }
+
+  function populateDispatcherRouteSelect() {
+    const routeSelect = document.getElementById('dispatcherNoteRouteSelect');
+    if (!routeSelect || !DataStore.isLoaded) return;
+
+    const firstOption = routeSelect.options[0]?.outerHTML || '<option value="">— Select a route —</option>';
+    routeSelect.innerHTML = firstOption;
+    DataStore.getRoutesByDelay().forEach(route => {
+      const option = document.createElement('option');
+      option.value = route.route_id;
+      option.textContent = `${route.route_id} (${(route.total_delay_min || 0).toFixed(0)} min)`;
+      routeSelect.appendChild(option);
+    });
+  }
+
+  function refreshDispatcherNoteView() {
+    const noteCurrent = document.getElementById('dispatcherNoteCurrent');
+    const noteInput = document.getElementById('dispatcherNoteInput');
+    const noteStatus = document.getElementById('dispatcherNoteStatus');
+    const routeSelect = document.getElementById('dispatcherNoteRouteSelect');
+    if (!noteCurrent || !noteInput || !noteStatus || !routeSelect) return;
+
+    const routeId = routeSelect.value;
+    const routeMessage = getRouteMessage(routeId);
+
+    noteInput.value = routeMessage?.message || '';
+    if (routeMessage) {
+      const stamp = formatNoteTimestamp(routeMessage.updatedAt);
+      noteCurrent.textContent = stamp
+        ? `Route ${routeId} • Saved ${stamp}\n${routeMessage.message}`
+        : `Route ${routeId}\n${routeMessage.message}`;
+      noteStatus.textContent = 'Saved';
+    } else {
+      noteCurrent.textContent = routeId
+        ? `No message saved for ${routeId}.`
+        : 'No route selected yet.';
+      noteStatus.textContent = 'No note';
+    }
+  }
+
+  function loadDispatcherNote() {
+    try {
+      const raw = localStorage.getItem('smartlogistic.routeMessages');
+      routeMessages = raw ? JSON.parse(raw) : {};
+      if (!routeMessages || typeof routeMessages !== 'object') {
+        routeMessages = {};
+      }
+    } catch {
+      routeMessages = {};
+    }
+    refreshDispatcherNoteView();
+  }
+
+  function saveDispatcherNote() {
+    const noteInput = document.getElementById('dispatcherNoteInput');
+    const panel = document.getElementById('dispatcherNotePanel');
+    const routeSelect = document.getElementById('dispatcherNoteRouteSelect');
+    if (!noteInput || !panel || !routeSelect) return;
+
+    const routeId = routeSelect.value;
+    if (!routeId) {
+      showToast('Select a route before saving a message.', 'warning');
+      return;
+    }
+
+    const message = String(noteInput.value || '').trim();
+    if (message) {
+      const existing = routeMessages[routeId] || { responses: [] };
+      routeMessages[routeId] = {
+        message,
+        updatedAt: new Date().toISOString(),
+        responses: Array.isArray(existing.responses) ? existing.responses : []
+      };
+    } else {
+      delete routeMessages[routeId];
+    }
+    persistRouteMessages();
+
+    panel.style.display = 'none';
+    refreshDispatcherNoteView();
+    showToast(message ? `Message saved for ${routeId}.` : `Message cleared for ${routeId}.`, 'success');
+  }
+
   function handleRouteSelect(routeId) {
     if (!routeId) {
       selectedRouteId = null; selectedRouteStops = [];
@@ -332,11 +437,20 @@
     }).join('');
   }
 
-  function generateAlerts(stops, routeId, routeInfo) {
+  function generateAlerts(stops, routeId, routeInfo, includeDispatcherNote = false) {
     const alertsCard = document.getElementById('dispatcherAlerts');
     const alertsList = document.getElementById('alertsList');
     const alertCount = document.getElementById('alertCount');
     const alerts = [];
+
+    const routeMessage = getRouteMessage(routeId);
+    if (routeMessage) {
+      alerts.push({
+        icon: '📝',
+        text: `<strong>Message:</strong> ${routeMessage.message}`
+      });
+    }
+
     stops.forEach(s => {
       const stopSeq = s.newSeq || s.seq;
       const riskProb = s.dynamicDelayProb ?? s.delayProb ?? 0;
@@ -709,7 +823,7 @@
 
     if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(stops, optimizedStopsWithRisk);
     renderOptimizedStopTable(optimizedStopsWithRisk);
-    generateAlerts(optimizedStopsWithRisk, selectedRouteId || routeInfo?.route_id || 'selected-route', routeInfo);
+    generateAlerts(optimizedStopsWithRisk, selectedRouteId || routeInfo?.route_id || 'selected-route', routeInfo, true);
     generateRoutingRationale(optimizedStopsWithRisk, apiResult);
     updatePriorityButtonState();
     showToast(`${getOptimizationLabel(selectedType)} route displayed.`, 'success');
@@ -762,6 +876,111 @@
     document.getElementById('kpiAvgDelay').textContent = `${kpis.avgDelay} min`;
     document.getElementById('kpiOnTime').textContent = kpis.onTimeRate;
     document.getElementById('kpiDelayed').textContent = kpis.delayedRoutes;
+  }
+
+  function getDashboardInsights() {
+    const routes = DataStore.routes || [];
+    const stops = DataStore.routeStops || [];
+
+    const routeSummary = routes
+      .map(route => ({
+        routeId: route.route_id,
+        delay: Number(route.total_delay_min) || 0,
+        onTimeRate: Number(route.on_time_delivery_rate) || 0,
+        vehicleType: route.vehicle_type || 'unknown',
+        weather: route.weather_condition || 'unknown',
+        traffic: route.traffic_level || 'unknown',
+        stops: Number(route.num_stops) || 0
+      }))
+      .sort((a, b) => b.delay - a.delay);
+
+    const criticalRoutes = routeSummary.filter(route => route.delay > 30);
+    const criticalStops = stops.filter(stop => {
+      const missed = stop.missed_time_window === 1 || stop.missed_time_window === '1';
+      const risk = Number(stop.delay_probability) || 0;
+      return missed || risk >= 0.35;
+    });
+
+    const latestWeather = DataStore.weatherData[DataStore.weatherData.length - 1] || {};
+    const weatherCondition = String(latestWeather.weather_condition || '').toLowerCase();
+    const weatherLabel = weatherCondition ? weatherCondition.charAt(0).toUpperCase() + weatherCondition.slice(1) : 'Unknown';
+
+    const topRoute = routeSummary[0] || null;
+    const averageDelay = routes.length
+      ? routes.reduce((sum, route) => sum + (Number(route.total_delay_min) || 0), 0) / routes.length
+      : 0;
+    const onTimeAverage = routes.length
+      ? routes.reduce((sum, route) => sum + (Number(route.on_time_delivery_rate) || 0), 0) / routes.length
+      : 0;
+
+    const topRoutes = criticalRoutes.slice(0, 3);
+    const statusText = topRoute
+      ? `${topRoute.routeId} leads the board with ${topRoute.delay.toFixed(0)} min delay.`
+      : 'No active risk on the board.';
+
+    return {
+      topRoute,
+      criticalRoutes,
+      criticalStops,
+      averageDelay,
+      onTimeAverage,
+      weatherLabel,
+      topRoutes,
+      statusText,
+      routePressure: routes.length ? Math.min(99, Math.round((criticalRoutes.length / routes.length) * 100)) : 0
+    };
+  }
+
+  function renderDashboardInsights() {
+    const alertBadge = document.getElementById('dashboardAlertBadge');
+    const riskTitle = document.getElementById('dashboardRiskTitle');
+    const riskSubtitle = document.getElementById('dashboardRiskSubtitle');
+    const criticalRoutes = document.getElementById('dashboardCriticalRoutes');
+    const criticalStops = document.getElementById('dashboardCriticalStops');
+    const routePressure = document.getElementById('dashboardRoutePressure');
+    const topRoutes = document.getElementById('dashboardTopRoutes');
+    const openRouteButton = document.getElementById('btnFocusRiskRoute');
+
+    if (!alertBadge || !riskTitle || !riskSubtitle || !criticalRoutes || !criticalStops || !routePressure || !topRoutes || !openRouteButton) return;
+
+    const insights = getDashboardInsights();
+    const topRoute = insights.topRoute;
+
+    alertBadge.textContent = `${insights.criticalRoutes.length + insights.criticalStops.length} alerts`;
+    riskTitle.textContent = topRoute ? topRoute.routeId : 'No active risk';
+    riskSubtitle.textContent = topRoute
+      ? insights.statusText + ` Weather: ${insights.weatherLabel}.`
+      : 'Waiting for route data...';
+
+    openRouteButton.disabled = !topRoute;
+    openRouteButton.textContent = topRoute ? 'Open priority route' : 'No route selected';
+    openRouteButton.onclick = () => {
+      if (!topRoute) return;
+      document.getElementById('nav-optimize')?.click();
+      window.appSelectOptimizeRoute(topRoute.routeId);
+    };
+
+    criticalRoutes.textContent = String(insights.criticalRoutes.length);
+    criticalStops.textContent = String(insights.criticalStops.length);
+    routePressure.textContent = `${insights.routePressure}%`;
+
+    const routesToShow = (insights.topRoutes.length ? insights.topRoutes : (topRoute ? [topRoute] : [])).slice(0, 3);
+    topRoutes.innerHTML = routesToShow.map(route => `
+      <button type="button" class="dashboard-route-pill" data-route="${route.routeId}">
+        <span>
+          <strong>${route.routeId}</strong>
+          <small>${route.vehicleType} • ${route.stops} stops</small>
+        </span>
+        <em>${route.delay.toFixed(0)} min</em>
+      </button>
+    `).join('') || '<div class="dashboard-route-pill empty">All routes are within the normal envelope.</div>';
+
+    topRoutes.querySelectorAll('.dashboard-route-pill[data-route]').forEach(button => {
+      button.addEventListener('click', () => {
+        document.getElementById('nav-optimize')?.click();
+        window.appSelectOptimizeRoute(button.dataset.route);
+      });
+    });
   }
 
   function renderRouteList() {
@@ -869,6 +1088,19 @@
     document.getElementById('btnMic').addEventListener('click', toggleVoice);
     document.getElementById('optRouteSelect').addEventListener('change', e => handleRouteSelect(e.target.value));
     document.getElementById('btnSortRoutes').addEventListener('click', toggleSortRoutes);
+    document.getElementById('btnDispatcherNoteToggle')?.addEventListener('click', () => {
+      const panel = document.getElementById('dispatcherNotePanel');
+      if (!panel) return;
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+    document.getElementById('dispatcherNoteRouteSelect')?.addEventListener('change', refreshDispatcherNoteView);
+    document.getElementById('btnDispatcherNoteCancel')?.addEventListener('click', () => {
+      const panel = document.getElementById('dispatcherNotePanel');
+      if (!panel) return;
+      panel.style.display = 'none';
+      refreshDispatcherNoteView();
+    });
+    document.getElementById('btnDispatcherNoteSave')?.addEventListener('click', saveDispatcherNote);
     document.getElementById('btnRefresh').addEventListener('click', async () => { showToast('Refreshing data...', 'info'); await loadData(); });
     document.getElementById('routeSearchInput')?.addEventListener('input', (e) => {
       dashboardQuery = e.target.value.trim();
@@ -892,6 +1124,7 @@
     });
 
     await loadData();
+  loadDispatcherNote();
 
     const backendOnline = await API.healthCheck();
     showToast(backendOnline ? 'Backend API connected' : 'Backend offline — frontend-only mode', backendOnline ? 'success' : 'warning');
@@ -912,14 +1145,17 @@
       dashboardMapRendered = false;
       showToast(`Loaded ${counts.routes} routes, ${counts.stops} stops`, 'success');
       updateKPIs();
+      renderDashboardInsights();
       renderRouteList();
       updateWeatherWidget();
+      populateDispatcherRouteSelect();
       populateRouteSelector();
       populateRouteFilters();
       if (currentView === 'optimize') {
         initOptimizeMap();
       }
       if (currentView === 'dashboard') {
+        renderDashboardInsights();
         renderDashboardMapIfNeeded();
       }
       if (analyticsRendered && window.Analytics) window.Analytics.render(DataStore);

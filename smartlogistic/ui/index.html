@@ -73,11 +73,57 @@
             </div>
           </div>
 
+          <div class="card dashboard-summary-card">
+            <div class="card-header">
+              <h3>Operations Snapshot</h3>
+              <span class="badge badge-danger" id="dashboardAlertBadge">0 alerts</span>
+            </div>
+            <div class="card-body dashboard-summary-body">
+              <div class="dashboard-summary-hero">
+                <div>
+                  <div class="dashboard-summary-title" id="dashboardRiskTitle">No active risk</div>
+                  <div class="dashboard-summary-subtitle" id="dashboardRiskSubtitle">Waiting for route data...</div>
+                </div>
+                <button class="btn btn-primary btn-sm" id="btnFocusRiskRoute">Open priority route</button>
+              </div>
+
+              <div class="dashboard-summary-chips">
+                <div class="summary-chip"><span id="dashboardCriticalRoutes">—</span><small>Critical routes</small></div>
+                <div class="summary-chip"><span id="dashboardCriticalStops">—</span><small>Risky stops</small></div>
+                <div class="summary-chip"><span id="dashboardRoutePressure">—</span><small>Route pressure</small></div>
+              </div>
+
+              <div class="dashboard-summary-routes" id="dashboardTopRoutes"></div>
+            </div>
+          </div>
+
           <div class="dashboard-grid">
             <div>
               <div class="card">
-                <div class="card-header"><h3>Live Route Map — Sivas Region</h3><span class="badge badge-success">Live</span></div>
-                <div class="map-container"><div id="map"></div></div>
+                <div class="card-header"><h3>Dispatcher Note Board</h3><span class="badge badge-info" id="dispatcherNoteStatus">No note</span></div>
+                <div class="card-body dispatcher-note-board">
+                  <p class="dispatcher-note-help">Assign a route-specific message here. It will appear at the top of optimization alerts after each optimization run.</p>
+                  <div class="dispatcher-note-actions">
+                    <button class="btn btn-primary btn-sm" id="btnDispatcherNoteToggle">Write Note</button>
+                  </div>
+                  <div class="dispatcher-note-panel" id="dispatcherNotePanel" style="display:none;">
+                    <div class="form-group" style="margin-bottom:10px;">
+                      <label class="form-label" for="dispatcherNoteRouteSelect">Route</label>
+                      <select class="form-control" id="dispatcherNoteRouteSelect">
+                        <option value="">— Select a route —</option>
+                      </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:10px;">
+                      <label class="form-label" for="dispatcherNoteInput">Dispatcher Message</label>
+                      <textarea class="form-control" id="dispatcherNoteInput" rows="4" placeholder="Example: Prioritize cold-chain deliveries after 18:00 due to highway traffic surge."></textarea>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:8px;">
+                      <button class="btn btn-sm btn-secondary" id="btnDispatcherNoteCancel">Cancel</button>
+                      <button class="btn btn-sm btn-primary" id="btnDispatcherNoteSave">Save Note</button>
+                    </div>
+                  </div>
+                  <div class="dispatcher-note-current" id="dispatcherNoteCurrent">No dispatcher note saved yet.</div>
+                </div>
               </div>
             </div>
             <div>
