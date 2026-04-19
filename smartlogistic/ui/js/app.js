@@ -338,10 +338,26 @@
     const alertCount = document.getElementById('alertCount');
     const alerts = [];
     stops.forEach(s => {
-      if (s.delay > 15) alerts.push({ icon: '!', text: `<strong>Delay ${s.delay.toFixed(1)} min</strong> at Stop #${s.seq} (${s.stopId}) on ${s.roadType} road, ${(s.delayProb*100).toFixed(0)}% delay probability.` });
+      const stopSeq = s.newSeq || s.seq;
+      const riskProb = s.dynamicDelayProb ?? s.delayProb ?? 0;
+      if (s.delay > 15) alerts.push({ icon: '!', text: `<strong>Delay ${s.delay.toFixed(1)} min</strong> at Stop #${stopSeq} (${s.stopId}) on ${s.roadType} road, ${(riskProb*100).toFixed(0)}% delay probability.` });
     });
-    const missed = stops.filter(s => s.missedWindow);
-    if (missed.length > 0) alerts.push({ icon: '!', text: `<strong>${missed.length} stop(s) missed time window.</strong> Stops: ${missed.map(s => '#' + s.seq).join(', ')}. Recommend notifying customers.` });
+    const missed = stops.filter(s => (typeof s.dynamicMissedWindow === 'boolean' ? s.dynamicMissedWindow : s.missedWindow));
+    if (missed.length > 0) alerts.push({ icon: '!', text: `<strong>${missed.length} stop(s) missed time window.</strong> Stops: ${missed.map(s => '#' + (s.newSeq || s.seq)).join(', ')}. Recommend notifying customers.` });
+
+    const movedCount = stops.filter(s => s.originalSeq && s.newSeq && s.originalSeq !== s.newSeq).length;
+    if (movedCount > 0) {
+      alerts.push({ icon: 'i', text: `<strong>Optimization changed ${movedCount} stop(s).</strong> Alerts and risk values were recalculated for the new sequence.` });
+    }
+
+    const highRiskStops = stops
+      .filter(s => (s.dynamicDelayProb ?? s.delayProb ?? 0) >= 0.6)
+      .slice(0, 3)
+      .map(s => `#${s.newSeq || s.seq}`);
+    if (highRiskStops.length > 0) {
+      alerts.push({ icon: '!', text: `<strong>High delay-risk stops:</strong> ${highRiskStops.join(', ')}. Consider manual check or dispatch buffer.` });
+    }
+
     const totalDelay = routeInfo ? (routeInfo.total_delay_min || 0) : 0;
     if (totalDelay > 100) alerts.push({ icon: '!', text: `<strong>Route ${routeId} has ${totalDelay.toFixed(0)} min total delay.</strong> Consider splitting route or reassigning stops.` });
     const mountain = stops.filter(s => s.roadType === 'mountain');
@@ -379,6 +395,62 @@
     const fuelCost = distanceKm * getVehicleFuelRate(vehicleType) * AppConfig.fuelPrice;
     const laborCost = safeCrewCount * (durationMin / 60) * AppConfig.workerWage;
     return fuelCost + laborCost;
+  }
+
+  function toMinuteOfDay(dateStr) {
+    if (!dateStr || typeof dateStr !== 'string') return null;
+    const parts = dateStr.split(' ');
+    if (parts.length < 2) return null;
+    const t = parts[1].split(':');
+    if (t.length < 2) return null;
+    const hh = Number(t[0]);
+    const mm = Number(t[1]);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+    return (hh * 60) + mm;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function recalculateDynamicWindowAndRisk(stops) {
+    if (!Array.isArray(stops) || stops.length === 0) return [];
+
+    const routeStartMinute = toMinuteOfDay(stops[0]?.windowOpen);
+    let cumulativeTimeMin = 0;
+
+    return stops.map((stop) => {
+      const legMinutes = 10 + (stop.delay || 0);
+      cumulativeTimeMin += legMinutes;
+
+      let maxAllowedTime = 45;
+      const stopCloseMinute = toMinuteOfDay(stop.windowClose);
+      if (routeStartMinute !== null && stopCloseMinute !== null) {
+        let delta = stopCloseMinute - routeStartMinute;
+        if (delta < 0) delta += 24 * 60;
+        maxAllowedTime = Math.max(1, delta);
+      }
+
+      const isMissedDynamic = cumulativeTimeMin > maxAllowedTime;
+      const baseProb = Number(stop.delayProb) || 0;
+      const pressure = clamp(cumulativeTimeMin / Math.max(1, maxAllowedTime), 0, 2);
+
+      let dynamicDelayProb = baseProb;
+      if (isMissedDynamic) {
+        const overflowRatio = (cumulativeTimeMin - maxAllowedTime) / Math.max(1, maxAllowedTime);
+        dynamicDelayProb = clamp(0.65 + (overflowRatio * 0.35), 0.65, 0.99);
+      } else {
+        dynamicDelayProb = clamp((baseProb * 0.55) + (pressure * 0.25), 0.02, 0.95);
+      }
+
+      return {
+        ...stop,
+        maxAllowedTime,
+        etaMin: cumulativeTimeMin,
+        dynamicMissedWindow: isMissedDynamic,
+        dynamicDelayProb,
+      };
+    });
   }
 
   // ─── Optimize ───
@@ -602,9 +674,11 @@
       return stop ? { ...stop, newSeq: index + 1, originalSeq: stop.seq } : null;
     }).filter(Boolean);
 
+    const optimizedStopsWithRisk = recalculateDynamicWindowAndRisk(optimizedStops);
+
     const originalTime = stops.reduce((s, st) => s + st.delay, 0) + (routeInfo?.planned_duration_min || 0);
     const originalDistance = parseFloat(routeInfo?.total_distance_km || document.getElementById('totalDistanceKm').value || '0') || 0;
-    const originalVehicle = routeInfo?.vehicle_type || document.getElementById('vehicleType').value;
+    const originalVehicle = document.getElementById('vehicleType').value || routeInfo?.vehicle_type;
     const originalCrew = getCrewCountForCost(routeInfo, personnelCount);
     const originalCost = calculateOperationalCost(originalDistance, originalTime, originalVehicle, originalCrew);
     
@@ -633,42 +707,39 @@
     document.getElementById('resNewRoute').textContent = aiRouteIds.join(' → ');
     document.getElementById('resTotalTime').textContent = `${optimizedTime.toFixed(0)} min • ${optimizedDistance.toFixed(1)} km`;
 
-    if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(stops, optimizedStops);
-    renderOptimizedStopTable(optimizedStops);
-    generateRoutingRationale(optimizedStops, apiResult);
+    if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(stops, optimizedStopsWithRisk);
+    renderOptimizedStopTable(optimizedStopsWithRisk);
+    generateAlerts(optimizedStopsWithRisk, selectedRouteId || routeInfo?.route_id || 'selected-route', routeInfo);
+    generateRoutingRationale(optimizedStopsWithRisk, apiResult);
     updatePriorityButtonState();
     showToast(`${getOptimizationLabel(selectedType)} route displayed.`, 'success');
   }
 
   function renderOptimizedStopTable(optimizedStops) {
     const tbody = document.getElementById('stopDelayBody');
-    
-    // Kümülatif Süre (Başlangıçta 0 dakika)
-    let cumulativeTimeMin = 0;
 
-    tbody.innerHTML = optimizedStops.map(s => {
+    const stopsWithDynamicMetrics = optimizedStops?.length > 0 && typeof optimizedStops[0].dynamicMissedWindow === 'boolean'
+      ? optimizedStops
+      : recalculateDynamicWindowAndRisk(optimizedStops);
+
+    tbody.innerHTML = stopsWithDynamicMetrics.map(s => {
       const dB = s.delay > 15 ? 'badge-danger' : s.delay > 5 ? 'badge-warning' : 'badge-success';
-      const pB = s.delayProb > 0.5 ? 'badge-danger' : s.delayProb > 0.25 ? 'badge-warning' : 'badge-success';
+      const riskProb = s.dynamicDelayProb ?? s.delayProb ?? 0;
+      const pB = riskProb > 0.5 ? 'badge-danger' : riskProb > 0.25 ? 'badge-warning' : 'badge-success';
       const moved = s.originalSeq !== s.newSeq;
       const movedBadge = moved ? `<span style="color:var(--success);font-size:.7rem;">(was #${s.originalSeq})</span>` : '';
       const status = moved ? 'Reordered' : 'Unchanged';
 
-      // --- GERÇEK MATEMATİK KISMI ---
-      // Her durak arası standart sürüş süresi (örn: 10 dk) + trafik gecikmesi ekleniyor
-      cumulativeTimeMin += 10 + (s.delay || 0);
-
-      // Durağın planlanan teslimat penceresi (Eğer veride yoksa varsayılan 45 dakika)
-      const maxAllowedTime = s.timeWindow || 45; 
-      
-      // Kümülatif geçen zaman, izin verilen pencereyi aştı mı?
-      const isMissedDynamic = cumulativeTimeMin > maxAllowedTime;
+      const etaMin = s.etaMin ?? 0;
+      const maxAllowedTime = s.maxAllowedTime ?? 45;
+      const isMissedDynamic = typeof s.dynamicMissedWindow === 'boolean' ? s.dynamicMissedWindow : false;
 
       const windowBadge = isMissedDynamic 
         ? '<span style="color:var(--danger);font-weight:bold;">❌ Missed</span>' 
         : '<span style="color:var(--success);">✅ In window</span>';
       
       // Açıklayıcı metin: Jüri bu hesabı şeffaf olarak görsün
-      const windowDetails = `<br><span style="font-size:0.65rem;color:var(--text-muted);">ETA: ${cumulativeTimeMin.toFixed(0)}m / Limit: ${maxAllowedTime}m</span>`;
+      const windowDetails = `<br><span style="font-size:0.65rem;color:var(--text-muted);">ETA: ${etaMin.toFixed(0)}m / Limit: ${maxAllowedTime}m</span>`;
 
       return `
         <tr style="${moved ? 'background:rgba(16,185,129,0.04);' : ''}">
@@ -676,7 +747,7 @@
           <td style="font-size:.78rem;">${s.stopId}</td>
           <td style="font-size:.78rem;">${s.roadType}</td>
           <td><span class="badge ${dB}">${s.delay.toFixed(1)} min</span></td>
-          <td><span class="badge ${pB}">${(s.delayProb*100).toFixed(0)}%</span></td>
+          <td><span class="badge ${pB}">${(riskProb*100).toFixed(0)}%</span></td>
           <td style="font-size:.72rem;">${windowBadge} ${windowDetails}</td>
           <td style="font-size:.78rem;">${status}</td>
         </tr>

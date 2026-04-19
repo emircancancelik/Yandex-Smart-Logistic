@@ -11,6 +11,6 @@
   },
   "optimization": {
     "default_crew_size": 2,
-    "use_osrm_for_routes": false
+    "use_osrm_for_routes": true
   }
 }

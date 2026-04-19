@@ -250,7 +250,8 @@ async def optimize_route(payload: IncidentPayload):
             payload.personnel_count,
             weather_traffic_reason,
             fuel_prices=_fuel_price_cache,
-            weight_type=weight_type
+            weight_type=weight_type,
+            vehicle_type=payload.vehicle_type
         )
 
         # Delay-priority should not produce a worse ETA than an unweighted delay solve.
@@ -261,7 +262,8 @@ async def optimize_route(payload: IncidentPayload):
                 payload.personnel_count,
                 weather_traffic_reason,
                 fuel_prices=_fuel_price_cache,
-                weight_type="delay"
+                weight_type="delay",
+                vehicle_type=payload.vehicle_type
             )
 
             if baseline_delay_res and not res:

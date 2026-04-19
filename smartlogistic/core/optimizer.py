@@ -33,11 +33,18 @@ class RouteOptimizer:
         total_distance_km: float,
         personnel_override: int,
         fuel_prices: dict | None = None,
-        weight_type: str = "balanced"
+        weight_type: str = "balanced",
+        vehicle_type: str | None = None
     ):
         """Selects the optimal fleet based on live Opet fuel prices, labor costs, and optimization weight type."""
         prices = fuel_prices or {}
         fuel_price_tl = prices.get("fuel_tl_per_liter", DEFAULT_FUEL_PRICE_TL)
+
+        preferred_vehicle = (vehicle_type or "").strip().lower()
+        if preferred_vehicle and preferred_vehicle in self.vehicle_specs:
+            candidate_specs = {preferred_vehicle: self.vehicle_specs[preferred_vehicle]}
+        else:
+            candidate_specs = self.vehicle_specs
 
         best_score   = float('inf')
         best_vehicle = "van"
@@ -49,7 +56,7 @@ class RouteOptimizer:
         best_total_cost = 0.0
         analysis_reason = ""
 
-        for v_type, v_data in self.vehicle_specs.items():
+        for v_type, v_data in candidate_specs.items():
             needed_count = math.ceil(package_count / v_data["cap"])
             if needed_count > 15:
                 continue  # More than 15 units is impractical
@@ -98,6 +105,9 @@ class RouteOptimizer:
                     f"is the best option{priority_mode} (₺{total_cost:.0f} total)."
                 )
 
+        if preferred_vehicle and preferred_vehicle in self.vehicle_specs:
+            analysis_reason = f"Vehicle fixed to {preferred_vehicle}. {analysis_reason}".strip()
+
         return {
             "vehicle_type": best_vehicle,
             "vehicle_count": best_count,
@@ -116,17 +126,27 @@ class RouteOptimizer:
         personnel_count: int,
         weather_traffic_reason: str,
         fuel_prices: dict | None = None,
-        weight_type: str = "balanced"
+        weight_type: str = "balanced",
+        vehicle_type: str | None = None
     ):
         est_total_km = sum(sum(row) for row in distance_matrix) / (len(distance_matrix) * 1000.0)
 
         fleet = self.select_optimal_fleet(
-            package_count, est_total_km, personnel_count, fuel_prices, weight_type
+            package_count,
+            est_total_km,
+            personnel_count,
+            fuel_prices,
+            weight_type,
+            vehicle_type
         )
         
         final_analysis = f"{weather_traffic_reason} {fleet['analysis_reason']}".strip()
 
-        data = self.create_data_model(distance_matrix, 1)
+        # Add a dummy sink node so the route can terminate at any stop instead of a fixed last stop.
+        augmented_matrix = [row[:] + [0] for row in distance_matrix]
+        augmented_matrix.append([0] * (len(distance_matrix) + 1))
+
+        data = self.create_data_model(augmented_matrix, 1)
 
         starts = [0] * data['num_vehicles']
         ends = [len(data['distance_matrix']) - 1] * data['num_vehicles']
@@ -172,12 +192,13 @@ class RouteOptimizer:
                 next_index = solution.Value(routing.NextVar(index))
                 from_node = manager.IndexToNode(index)
                 to_node = manager.IndexToNode(next_index)
-                
-                total_dist_km += data['distance_matrix'][from_node][to_node] / 1000.0
+
+                if to_node != len(distance_matrix):
+                    total_dist_km += data['distance_matrix'][from_node][to_node] / 1000.0
                 index = next_index
                 
             route.append(manager.IndexToNode(index))
-            routes.append(route)
+            routes.append([node for node in route if node < len(distance_matrix)])
 
             total_estimated_time_minutes = (total_dist_km / 40.0) * 60.0
 
