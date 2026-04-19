@@ -208,7 +208,7 @@ async def optimize_route(payload: IncidentPayload):
                         stops[i].lat, stops[i].lng,
                         stops[j].lat, stops[j].lng
                     )
-                    base_matrix[i][j] = int(dist * 10)  # OR-Tools expects integers (x10 scaling)
+                    base_matrix[i][j] = int(dist * 1000)  # OR-Tools expects integers (x10 scaling)
 
         # Apply XGBoost delay penalty to the affected edge (XAI)
         weighted_matrix = copy.deepcopy(base_matrix)
@@ -228,7 +228,7 @@ async def optimize_route(payload: IncidentPayload):
             u_str, v_str = affected_nodes[0], affected_nodes[1]
             if u_str in node_ids and v_str in node_ids:
                 u_idx, v_idx = node_ids.index(u_str), node_ids.index(v_str)
-                edge_penalty = int(predicted_delay * 100 * penalty_multiplier[weight_type])
+                edge_penalty = int(predicted_delay * 666 * penalty_multiplier[weight_type])
                 weighted_matrix[u_idx][v_idx] += edge_penalty
                 weighted_matrix[v_idx][u_idx] += edge_penalty
 

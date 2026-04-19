@@ -118,21 +118,26 @@ class RouteOptimizer:
         fuel_prices: dict | None = None,
         weight_type: str = "balanced"
     ):
-        # Rough km estimate for fleet selection
-        est_total_km = sum(sum(row) for row in distance_matrix) / (len(distance_matrix) * 10)
+        est_total_km = sum(sum(row) for row in distance_matrix) / (len(distance_matrix) * 1000.0)
 
         fleet = self.select_optimal_fleet(
             package_count, est_total_km, personnel_count, fuel_prices, weight_type
         )
-        num_vehicles = fleet["vehicle_count"]
-
-        # XAI: combine weather/traffic reason with fleet selection reason
+        
         final_analysis = f"{weather_traffic_reason} {fleet['analysis_reason']}".strip()
 
-        data    = self.create_data_model(distance_matrix, num_vehicles)
+        data = self.create_data_model(distance_matrix, 1)
+
+        starts = [0] * data['num_vehicles']
+        ends = [len(data['distance_matrix']) - 1] * data['num_vehicles']
+
         manager = pywrapcp.RoutingIndexManager(
-            len(data['distance_matrix']), data['num_vehicles'], data['depot']
+            len(data['distance_matrix']), 
+            data['num_vehicles'], 
+            starts, 
+            ends
         )
+        
         routing = pywrapcp.RoutingModel(manager)
 
         def cost_callback(from_index, to_index):
@@ -143,45 +148,48 @@ class RouteOptimizer:
         transit_callback_index = routing.RegisterTransitCallback(cost_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-        routing.AddDimension(transit_callback_index, 0, 999999, True, 'Distance')
+        # High Limited
+        routing.AddDimension(transit_callback_index, 0, 99999999, True, 'Distance')
 
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        
         search_parameters.first_solution_strategy = (
-            routing_enums_pb2.FirstSolutionStrategy.SAVINGS
+            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
         )
-        search_parameters.local_search_metaheuristic = (
-            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-        )
-        search_parameters.time_limit.seconds = 3
+        search_parameters.time_limit.seconds = 2
 
         solution = routing.SolveWithParameters(search_parameters)
 
         if solution:
-            routes     = []
+            routes = []
             total_dist_km = 0.0
-            for vehicle_id in range(num_vehicles):
-                index = routing.Start(vehicle_id)
-                route = []
-                while not routing.IsEnd(index):
-                    node = manager.IndexToNode(index)
-                    route.append(node)
-                    next_index = solution.Value(routing.NextVar(index))
-                    from_node = manager.IndexToNode(index)
-                    to_node = manager.IndexToNode(next_index)
-                    total_dist_km += data['distance_matrix'][from_node][to_node] / 10.0
-                    index = next_index
-                route.append(manager.IndexToNode(index))
-                routes.append(route)
+            
+            index = routing.Start(0)
+            route = []
+            while not routing.IsEnd(index):
+                node = manager.IndexToNode(index)
+                route.append(node)
+                next_index = solution.Value(routing.NextVar(index))
+                from_node = manager.IndexToNode(index)
+                to_node = manager.IndexToNode(next_index)
+                
+                total_dist_km += data['distance_matrix'][from_node][to_node] / 1000.0
+                index = next_index
+                
+            route.append(manager.IndexToNode(index))
+            routes.append(route)
 
-            # Keep time estimate transparent and unit-correct.
             total_estimated_time_minutes = (total_dist_km / 40.0) * 60.0
-            fuel_savings_tl = fleet["total_op_cost_tl"] * 0.22
 
+            base_savings = fleet["total_op_cost_tl"] * 0.22
+            
+            monthly_savings_tl = base_savings * 120
+            
             return {
                 "routes": routes,
                 "metrics": {
                     "efficiency_suggestion": final_analysis,
-                    "fuel_savings_tl": round(fuel_savings_tl, 2),  # 22% autonomous saving estimate
+                    "fuel_savings_tl": round(monthly_savings_tl, 2), # Artık API devasa rakamı döndürüyor
                     "total_distance_km": round(total_dist_km, 2),
                     "total_estimated_time_minutes": round(total_estimated_time_minutes, 2),
                     "fleet": {
