@@ -8,8 +8,9 @@ import math
 import copy
 import httpx
 import re
-from datetime import datetime, timezone
 
+from datetime import datetime, timezone
+from core.evaluater import RouteXAIEvaluator
 from core.predictor import DelayPredictor
 from core.optimizer import RouteOptimizer, DEFAULT_FUEL_PRICE_TL
 
@@ -24,6 +25,7 @@ app.add_middleware(
 
 predictor = DelayPredictor()
 optimizer = RouteOptimizer(depot_index=0)
+xai_evaluator = RouteXAIEvaluator()
 
 # ─── In-memory fuel price cache ───
 _fuel_price_cache = {
@@ -285,11 +287,18 @@ async def optimize_route(payload: IncidentPayload):
         if len(optimized_route_ids) > 1 and optimized_route_ids[0] == optimized_route_ids[-1]:
             optimized_route_ids = optimized_route_ids[:-1]
 
+        xai_result = xai_evaluator.calculate_score(
+            delay_minutes=predicted_delay,
+            distance_km=res["metrics"]["total_distance_km"],
+            weather_condition=payload.weather_condition
+        )
+
         return {
             "status": "success",
             "event_id": payload.event_id,
             "ml_predicted_delay_minutes": predicted_delay,
             "analysis": res["metrics"]["efficiency_suggestion"],
+            "xai_analysis": xai_result,
             "ml_metrics": {
                 "affected_edge": payload.affected_edge,
                 "predicted_delay_min": predicted_delay,
