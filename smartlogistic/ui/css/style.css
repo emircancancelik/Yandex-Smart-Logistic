@@ -1289,6 +1289,24 @@ input, select, textarea { font-family: inherit; }
   gap: 16px;
 }
 
+.optimize-left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: 84px;
+  align-self: start;
+  max-height: calc(100vh - 108px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.optimize-map-sticky {
+  position: sticky;
+  top: 84px;
+  z-index: 4;
+}
+
 @media (max-width: 1480px) {
   .optimize-main-grid {
     grid-template-columns: 1fr 360px;
@@ -1430,6 +1448,14 @@ input, select, textarea { font-family: inherit; }
 @media (max-width: 1200px) {
   .dashboard-grid { grid-template-columns: 1fr; }
   .optimize-main-grid { grid-template-columns: 1fr; }
+  .optimize-left-panel {
+    position: static;
+    top: auto;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+  .optimize-map-sticky { position: static; top: auto; }
   .charts-grid    { grid-template-columns: 1fr; }
 }
 

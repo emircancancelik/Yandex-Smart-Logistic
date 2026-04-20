@@ -331,6 +331,10 @@
       document.getElementById('dispatcherAlerts').style.display = 'none';
       document.getElementById('resultPanel').classList.remove('visible');
       document.getElementById('optimizationPriorityPanel')?.remove();
+      const rationaleCard = document.getElementById('optimizationRationaleCard');
+      if (rationaleCard) rationaleCard.style.display = 'none';
+      const whyChangedEl = document.getElementById('resWhyChanged');
+      if (whyChangedEl) whyChangedEl.textContent = '—';
       document.getElementById('recommendationCard').style.display = 'none';
       document.getElementById('optMapLegendOriginal').style.display = 'none';
       document.getElementById('optMapLegendOptimized').style.display = 'none';
@@ -698,47 +702,54 @@
     updatePriorityButtonState();
   }
   function generateRoutingRationale(optimizedStops, apiResult) {
-  const rationaleList = document.getElementById('rationaleList');
-  const rationaleCard = document.getElementById('optimizationRationaleCard');
-  if (!rationaleList || !rationaleCard) return;
+    const rationaleList = document.getElementById('rationaleList');
+    const rationaleCard = document.getElementById('optimizationRationaleCard');
+    if (!rationaleList || !rationaleCard) return;
 
-  let reasons = [];
-  const weather = document.getElementById('weatherCondition').value;
-  const traffic = document.getElementById('trafficLevel').value;
-  const affectedEdge = document.getElementById('affectedEdge').value; 
+    const reasons = [];
+    const weather = document.getElementById('weatherCondition')?.value || 'clear';
+    const traffic = document.getElementById('trafficLevel')?.value || 'low';
+    const affectedEdge = document.getElementById('affectedEdge')?.value || '';
+    const predictedDelay = Number(apiResult?.ml_predicted_delay_minutes || 0);
 
-  optimizedStops.forEach(stop => {
-    if (stop.originalSeq !== stop.newSeq) {
-      let reason = "";
-      const isDelayedEdge = affectedEdge.includes(stop.stopId);
-      if (stop.newSeq > stop.originalSeq + 2) {
-        reason = `Stop <strong>${stop.stopId}</strong> was moved from #${stop.originalSeq} to <strong>#${stop.newSeq}</strong>. `;
-        
-        if (weather === 'snow' || weather === 'rain') {
-          reason += `Due to severe <strong>${weather}</strong> conditions making mountain passes hazardous, AI delayed this delivery to ensure vehicle stability and safety.`;
-        } else if (traffic === 'high') {
-          reason += `Heavy traffic congestion detected on the primary corridor; this stop was deprioritized to optimize the overall fleet timeline.`;
-        } else {
-          reason += `Re-routed to the end of the sequence to minimize total fuel consumption and avoid redundant backtracking.`;
-        }
-      } 
-      else if (stop.newSeq < stop.originalSeq) {
-        reason = `Stop <strong>${stop.stopId}</strong> was prioritized from #${stop.originalSeq} to <strong>#${stop.newSeq}</strong>. `;
-        reason += `AI pulled this forward to guarantee delivery before <strong>${weather}</strong> conditions worsen and to meet the strict 45-min time window.`;
-      }
-      
-      if (reason) reasons.push(reason);
+    if (affectedEdge && predictedDelay > 15) {
+      reasons.push(`High delay on <strong>${affectedEdge}</strong> (${predictedDelay.toFixed(0)} min). Route was reshuffled to bypass this segment.`);
     }
-  });
-  if (affectedEdge && apiResult.ml_predicted_delay_minutes > 15) {
-    reasons.unshift(`<strong>Critical Bypass:</strong> The segment <strong>${affectedEdge}</strong> is predicted to have a ${apiResult.ml_predicted_delay_minutes} min delay. The AI engine has restructured the entire sequence to bypass this bottleneck.`);
+
+    optimizedStops
+      .filter(stop => stop.originalSeq !== stop.newSeq)
+      .sort((a, b) => a.newSeq - b.newSeq)
+      .forEach(stop => {
+        const movedEarlier = stop.newSeq < stop.originalSeq;
+        const riskProb = (stop.dynamicDelayProb ?? stop.delayProb ?? 0) * 100;
+
+        let contextReason = '';
+        if (weather === 'snow') {
+          contextReason = 'Snow risk increased. Safer roads were prioritized.';
+        } else if (weather === 'rain') {
+          contextReason = 'Rain risk increased. Slippery sections were avoided.';
+        } else if (traffic === 'high') {
+          contextReason = 'Traffic was heavy. Flow was rebalanced.';
+        } else {
+          contextReason = 'Order was optimized for time and cost.';
+        }
+
+        const windowReason = stop.dynamicMissedWindow
+          ? `Time-window risk was high (${riskProb.toFixed(0)}%).`
+          : `Risk was ${riskProb.toFixed(0)}%.`;
+
+        reasons.push(
+          `Stop <strong>#${stop.originalSeq}</strong> moved to <strong>#${stop.newSeq}</strong> (${stop.stopId}). ${movedEarlier ? 'Moved earlier.' : 'Moved later.'} ${contextReason} ${windowReason}`
+        );
+      });
+
+    rationaleList.innerHTML = reasons.length > 0
+      ? reasons.map(r => `<li style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:6px;">${r}</li>`).join('')
+      : '<li>No major reorder needed.</li>';
+
+    rationaleCard.style.display = 'block';
+    return reasons;
   }
-  rationaleList.innerHTML = reasons.length > 0 
-    ? reasons.map(r => `<li style="margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;">${r}</li>`).join('')
-    : "<li>Route sequence is optimal. No significant reordering required for current conditions.</li>";
-  
-  rationaleCard.style.display = 'block';
-}
 
   function displayOptimizationResult(apiResult, stops, routeInfo, personnelCount, selectedType = 'balanced') {
     if (!apiResult || apiResult.status !== 'success') return;
@@ -785,7 +796,14 @@
     if (optimizeMapInitialized) OptimizeMap.showOptimizedRoute(stops, optimizedStopsWithRisk);
     renderOptimizedStopTable(optimizedStopsWithRisk);
     generateAlerts(optimizedStopsWithRisk, selectedRouteId || routeInfo?.route_id || 'selected-route', routeInfo, true);
-    generateRoutingRationale(optimizedStopsWithRisk, apiResult);
+    const rationaleReasons = generateRoutingRationale(optimizedStopsWithRisk, apiResult) || [];
+    const whyChangedEl = document.getElementById('resWhyChanged');
+    if (whyChangedEl) {
+      const summary = rationaleReasons[0]
+        ? rationaleReasons[0].replace(/<[^>]+>/g, '')
+        : 'No major reorder needed.';
+      whyChangedEl.textContent = summary;
+    }
     updatePriorityButtonState();
     showToast(`${getOptimizationLabel(selectedType)} route displayed.`, 'success');
   }
